@@ -33,7 +33,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&slackWebhookURL, "slack-webhook-url", "", "Slack Webhook URL")
 	rootCmd.PersistentFlags().StringVar(&kubeConfig, "kube-config", "local", "Kubernetes 설정 (local 또는 cluster)")
 	rootCmd.PersistentFlags().StringVar(&clusterName, "cluster-name", "", "클러스터 이름")
-	rootCmd.PersistentFlags().StringVar(&nodepoolName, "nodepool-name", "devel-mss-worker", "노드풀 이름")
+	rootCmd.PersistentFlags().StringVar(&nodepoolName, "nodepool-name", "devel-nodepool-name", "노드풀 이름")
 }
 
 func initConfig() {
