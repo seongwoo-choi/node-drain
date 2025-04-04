@@ -1,0 +1,125 @@
+name: Drain EKS Node based on karpenter allocate rate
+
+on:
+  workflow_dispatch:
+    inputs:
+      COMMAND:
+        description: '실행할 명령어입니다.'
+        type: choice
+        options:
+          - 'drain'
+          - 'karpenter allocate-rate'
+        required: true
+        default: 'drain'
+      CLUSTER_NAME:
+        description: '클러스터 이름입니다.'
+        type: choice
+        options:
+          - 'devel_eks_cluster'
+          - 'alpha_eks_cluster'
+          - 'product_eks_cluster'
+        required: true
+        default: 'devel_eks_cluster'
+      PROMETHEUS_ADDRESS:
+        description: '프로메테우스 주소입니다.'
+        type: choice
+        options:
+          - 'http://프로메테우스.com/prometheus'
+        required: true
+        default: 'http://프로메테우스.com/prometheus'
+      PROMETHEUS_ORG_ID:
+        description: '프로메테우스 미미르 프록시 org-id 입니다.'
+        type: choice
+        options:
+          - 'orgainization-dev'
+          - 'orgainization-alp'
+          - 'orgainization-prd'
+        required: true
+        default: 'orgainization-dev'
+      NODEPOOL_NAME:
+        description: '드레인 하려는 Nodepool 이름입니다.'
+        type: choice
+        options:
+          - 'worker-nodepool-name'  
+        required: true
+        default: 'worker-nodepool-name'
+      KUBE_CONFIG:
+        description: '프로그램이 실행되는 위치입니다.'
+        type: choice
+        options:
+          - 'local'
+          - 'github_action'
+          - 'cluster'
+        required: true
+        default: 'github_action'
+      EKS_CLUSTER_VERSION:
+        description: '클러스터 버전입니다. - ex) v1.28.0 / v1.29.0'
+        required: true
+        default: 'v1.28.0'
+      AWS_ID:
+        description: 'AWS 계정 ID 입니다.'
+        required: true
+        default: '123456789012'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true # 동시에 실행되는 github action 을 취소 - 취소 시 이전 작업이 취소되는 것이 아니라 동시에 실행되는 작업이 취소됨
+
+jobs:
+  run:
+    name: Drain EKS Node based on karpenter allocate rate
+    runs-on: sre
+    environment: main
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install AWS CLI v2
+      run: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install --update
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v3
+      with:
+        role-to-assume: arn:aws:iam::${{ inputs.AWS_ID }}:role/github_action_role
+        aws-region: "ap-northeast-2"
+        role-duration-seconds: 21600
+
+    - name: Verify AWS credentials
+      run: |
+        aws sts get-caller-identity
+        aws iam get-role --role-name github_action_role
+    
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v4
+      with:
+        version: ${{ inputs.EKS_CLUSTER_VERSION }}
+
+    - name: Create .kube directory
+      run: mkdir -p ~/.kube
+
+    - name: Change kube config
+      run: |
+        aws eks update-kubeconfig --name ${{ inputs.CLUSTER_NAME }} --region ap-northeast-2
+        kubectl config use-context arn:aws:eks:ap-northeast-2:${{ inputs.AWS_ID }}:cluster/${{ inputs.CLUSTER_NAME }}
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22'
+
+    - name: Run
+      id: Run
+      run: |
+        go mod tidy
+        go run main.go ${{ inputs.COMMAND }} \
+          --prometheus-address ${{ inputs.PROMETHEUS_ADDRESS }} \
+          --prometheus-org-id ${{ inputs.PROMETHEUS_ORG_ID }} \
+          --nodepool-name ${{ inputs.NODEPOOL_NAME }} \
+          --slack-webhook-url "${{ vars.SLACK_WEBHOOK_URL }}" \
+          --kube-config ${{ inputs.KUBE_CONFIG }} \
+          --cluster-name ${{ inputs.CLUSTER_NAME }}
