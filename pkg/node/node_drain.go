@@ -162,21 +162,27 @@ func drainSingleNode(clientSet kubernetes.Interface, nodeName string) error {
 func waitForPodsToTerminate(clientSet kubernetes.Interface, nodeName string) error {
 	slog.Info("노드에서 데몬셋을 제외한 모든 파드가 종료될 때까지 기다리는 중", "nodeName", nodeName)
 
-	_, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	for {
-		pods, err := pod.GetNonCriticalPods(clientSet, nodeName)
-		if err != nil {
-			return fmt.Errorf("노드 %s 에서 데몬셋을 제외한 파드를 가져오는 중 오류가 발생했습니다.: %v", nodeName, err)
-		}
+		select {
+		case <-ctx.Done():
+			slog.Warn("파드 종료 대기 타임아웃", "nodeName", nodeName)
+			return fmt.Errorf("노드 %s 에서 파드 종료 대기 중 타임아웃 발생", nodeName)
+		default:
+			pods, err := pod.GetNonCriticalPods(clientSet, nodeName)
+			if err != nil {
+				return fmt.Errorf("노드 %s 에서 데몬셋을 제외한 파드를 가져오는 중 오류가 발생했습니다.: %v", nodeName, err)
+			}
 
-		if len(pods) == 0 {
-			slog.Info("데몬셋을 제외한 모든 Pod가 종료됨", "nodeName", nodeName)
-			return nil
-		}
+			if len(pods) == 0 {
+				slog.Info("데몬셋을 제외한 모든 Pod가 종료됨", "nodeName", nodeName)
+				return nil
+			}
 
-		slog.Info("Pod 종료 대기 중", "nodeName", nodeName, "remainingPods", len(pods))
-		time.Sleep(15 * time.Second)
+			slog.Info("Pod 종료 대기 중", "nodeName", nodeName, "remainingPods", len(pods))
+			time.Sleep(15 * time.Second)
+		}
 	}
 }

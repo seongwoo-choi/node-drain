@@ -28,19 +28,30 @@ func EvictPods(clientSet kubernetes.Interface, nodeName string) error {
 
 	for _, pod := range pods {
 		grace := &gracePeriod
+		retryCount := 0
+		maxRetries := 3
 
-		slog.Info("Pod 삭제 중", "nodeName", nodeName, "podName", pod.Name, "gracePeriod", *grace)
-		err := clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metaV1.DeleteOptions{
-			GracePeriodSeconds: grace,
-			PropagationPolicy:  &propagationPolicy,
-		})
+		for {
+			slog.Info("Pod 삭제 중", "nodeName", nodeName, "podName", pod.Name, "gracePeriod", *grace)
+			err := clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metaV1.DeleteOptions{
+				GracePeriodSeconds: grace,
+				PropagationPolicy:  &propagationPolicy,
+			})
 
-		if err != nil {
-			if errors.IsNotFound(err) {
-				slog.Info(nodeName + "노드에서 pod evict 완료")
-				continue
+			if err != nil {
+				if errors.IsNotFound(err) {
+					slog.Info(nodeName + "노드에서 pod evict 완료")
+					break
+				}
+				if retryCount < maxRetries {
+					retryCount++
+					slog.Warn("Pod 삭제 재시도", "nodeName", nodeName, "podName", pod.Name, "retryCount", retryCount)
+					time.Sleep(5 * time.Second)
+					continue
+				}
+				return fmt.Errorf("노드 %s 에서 %s 파드를 삭제하는 중 오류가 발생했습니다.: %v", nodeName, pod.Name, err)
 			}
-			return fmt.Errorf("노드 %s 에서 %s 파드를 삭제하는 중 오류가 발생했습니다.: %v", nodeName, pod.Name, err)
+			break
 		}
 	}
 
