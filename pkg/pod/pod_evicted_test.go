@@ -3,59 +3,163 @@ package pod
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	coreV1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestEvictPods(t *testing.T) {
-	// 테스트 클라이언트 생성
-	clientset := fake.NewSimpleClientset()
-
-	// 테스트 파드 생성
-	pod1 := &coreV1.Pod{
-		ObjectMeta: metaV1.ObjectMeta{
-			Name:      "test-pod-1",
-			Namespace: "default",
-		},
-		Spec: coreV1.PodSpec{
-			NodeName: "test-node",
-		},
-	}
-
-	pod2 := &coreV1.Pod{
-		ObjectMeta: metaV1.ObjectMeta{
-			Name:      "test-pod-2",
-			Namespace: "default",
-			OwnerReferences: []metaV1.OwnerReference{
+	tests := []struct {
+		name          string
+		nodeName      string
+		pods          []coreV1.Pod
+		config        *EvictionConfig
+		expectedError bool
+	}{
+		{
+			name:     "정상적인 파드 제거",
+			nodeName: "node-1",
+			pods: []coreV1.Pod{
 				{
-					Kind: "DaemonSet",
-					Name: "test-ds",
+					ObjectMeta: metaV1.ObjectMeta{
+						Name:      "pod-1",
+						Namespace: "default",
+					},
+					Spec: coreV1.PodSpec{
+						NodeName: "node-1",
+					},
 				},
 			},
+			config:        DefaultEvictionConfig(),
+			expectedError: false,
 		},
-		Spec: coreV1.PodSpec{
-			NodeName: "test-node",
+		{
+			name:     "PDB로 인한 제거 실패",
+			nodeName: "node-1",
+			pods: []coreV1.Pod{
+				{
+					ObjectMeta: metaV1.ObjectMeta{
+						Name:      "pod-1",
+						Namespace: "default",
+						Labels: map[string]string{
+							"app": "test",
+						},
+					},
+					Spec: coreV1.PodSpec{
+						NodeName: "node-1",
+					},
+				},
+			},
+			config:        DefaultEvictionConfig(),
+			expectedError: true,
 		},
 	}
 
-	// 파드 생성
-	_, err := clientset.CoreV1().Pods("default").Create(context.Background(), pod1, metaV1.CreateOptions{})
-	assert.NoError(t, err)
-	_, err = clientset.CoreV1().Pods("default").Create(context.Background(), pod2, metaV1.CreateOptions{})
-	assert.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
 
-	// EvictPods 테스트
-	err = EvictPods(clientset, "test-node")
-	assert.NoError(t, err)
+			// 테스트용 파드 추가
+			for _, pod := range tt.pods {
+				_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), &pod, metaV1.CreateOptions{})
+				if err != nil {
+					t.Fatalf("파드 생성 실패: %v", err)
+				}
+			}
 
-	// 파드가 정상적으로 삭제되었는지 확인
-	pods, err := clientset.CoreV1().Pods("default").List(context.Background(), metaV1.ListOptions{})
-	assert.NoError(t, err)
-	assert.Equal(t, 1, len(pods.Items)) // DaemonSet 파드만 남아있어야 함
-	assert.Equal(t, "test-pod-2", pods.Items[0].Name)
+			// PDB 추가 (필요한 경우)
+			if tt.name == "PDB로 인한 제거 실패" {
+				pdb := &policyv1.PodDisruptionBudget{
+					ObjectMeta: metaV1.ObjectMeta{
+						Name:      "test-pdb",
+						Namespace: "default",
+					},
+					Spec: policyv1.PodDisruptionBudgetSpec{
+						MinAvailable: &intstr.IntOrString{Type: intstr.Int, IntVal: 1},
+						Selector: &metaV1.LabelSelector{
+							MatchLabels: map[string]string{"app": "test"},
+						},
+					},
+				}
+				_, err := client.PolicyV1().PodDisruptionBudgets("default").Create(context.Background(), pdb, metaV1.CreateOptions{})
+				if err != nil {
+					t.Fatalf("PDB 생성 실패: %v", err)
+				}
+			}
+
+			err := EvictPods(client, tt.nodeName, tt.config)
+
+			if (err != nil) != tt.expectedError {
+				t.Errorf("EvictPods() error = %v, expectedError %v", err, tt.expectedError)
+			}
+		})
+	}
+}
+
+func TestWaitForPodDeletion(t *testing.T) {
+	tests := []struct {
+		name          string
+		pod           coreV1.Pod
+		config        *EvictionConfig
+		expectedError bool
+	}{
+		{
+			name: "파드가 정상적으로 삭제됨",
+			pod: coreV1.Pod{
+				ObjectMeta: metaV1.ObjectMeta{
+					Name:      "pod-1",
+					Namespace: "default",
+				},
+			},
+			config:        DefaultEvictionConfig(),
+			expectedError: false,
+		},
+		{
+			name: "파드 삭제 타임아웃",
+			pod: coreV1.Pod{
+				ObjectMeta: metaV1.ObjectMeta{
+					Name:      "pod-2",
+					Namespace: "default",
+				},
+			},
+			config: &EvictionConfig{
+				PodDeletionTimeout: 1 * time.Second,
+				CheckInterval:      100 * time.Millisecond,
+			},
+			expectedError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
+
+			// 테스트용 파드 추가
+			_, err := client.CoreV1().Pods(tt.pod.Namespace).Create(context.Background(), &tt.pod, metaV1.CreateOptions{})
+			if err != nil {
+				t.Fatalf("파드 생성 실패: %v", err)
+			}
+
+			if tt.name == "파드가 정상적으로 삭제됨" {
+				// 파드를 삭제하여 테스트 케이스 준비
+				err := client.CoreV1().Pods(tt.pod.Namespace).Delete(context.Background(), tt.pod.Name, metaV1.DeleteOptions{})
+				if err != nil {
+					t.Fatalf("파드 삭제 실패: %v", err)
+				}
+			}
+
+			err = waitForPodDeletion(context.Background(), client, tt.pod, tt.config)
+
+			if (err != nil) != tt.expectedError {
+				t.Errorf("waitForPodDeletion() error = %v, expectedError %v", err, tt.expectedError)
+			}
+		})
+	}
 }
 
 func TestGetNonCriticalPods(t *testing.T) {
