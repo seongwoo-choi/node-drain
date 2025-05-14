@@ -16,7 +16,7 @@ func GetKarpenterNodesAllocatable(clientSet kubernetes.Interface, resourceType s
 	nodepool := os.Getenv("NODEPOOL_NAME")
 	prometheusClient, err := config.CreatePrometheusClient()
 	if err != nil {
-		slog.Error("Prometheus 클라이언트 생성 중 오류 발생", err)
+		slog.Error("Prometheus 클라이언트 생성 중 오류 발생", "error", err)
 		return 0, err
 	}
 
@@ -25,7 +25,7 @@ func GetKarpenterNodesAllocatable(clientSet kubernetes.Interface, resourceType s
 
 	result, err := config.QueryPrometheus(prometheusClient, query)
 	if err != nil {
-		slog.Error("Prometheus 쿼리 중 오류 발생", err)
+		slog.Error("Prometheus 쿼리 중 오류 발생", "error", err)
 		return 0, err
 	}
 
@@ -35,7 +35,7 @@ func GetKarpenterNodesAllocatable(clientSet kubernetes.Interface, resourceType s
 func GetKarpenterPodRequest(clientSet kubernetes.Interface, resourceType string) (int64, error) {
 	prometheusClient, err := config.CreatePrometheusClient()
 	if err != nil {
-		slog.Error("Prometheus 클라이언트 생성 중 오류 발생", err)
+		slog.Error("Prometheus 클라이언트 생성 중 오류 발생", "error", err)
 		return 0, err
 	}
 
@@ -46,7 +46,7 @@ func GetKarpenterPodRequest(clientSet kubernetes.Interface, resourceType string)
 
 	result, err := config.QueryPrometheus(prometheusClient, query)
 	if err != nil {
-		slog.Error("Prometheus 쿼리 중 오류 발생", err)
+		slog.Error("Prometheus 쿼리 중 오류 발생", "error", err)
 		return 0, err
 	}
 
@@ -56,7 +56,7 @@ func GetKarpenterPodRequest(clientSet kubernetes.Interface, resourceType string)
 func GetKarpenterNodepoolUsage(clientSet kubernetes.Interface, resourceType string) (int64, error) {
 	prometheusClient, err := config.CreatePrometheusClient()
 	if err != nil {
-		slog.Error("Prometheus 클라이언트 생성 중 오류 발생", err)
+		slog.Error("Prometheus 클라이언트 생성 중 오류 발생", "error", err)
 		return 0, err
 	}
 
@@ -67,7 +67,7 @@ func GetKarpenterNodepoolUsage(clientSet kubernetes.Interface, resourceType stri
 
 	result, err := config.QueryPrometheus(prometheusClient, query)
 	if err != nil {
-		slog.Error("Prometheus 쿼리 중 오류 발생", err)
+		slog.Error("Prometheus 쿼리 중 오류 발생", "error", err)
 		return 0, err
 	}
 
@@ -77,13 +77,13 @@ func GetKarpenterNodepoolUsage(clientSet kubernetes.Interface, resourceType stri
 func GetAllocateRate(clientSet kubernetes.Interface, resourceType string) (int, error) {
 	nodepoolUsage, err := GetKarpenterNodepoolUsage(clientSet, resourceType)
 	if err != nil {
-		slog.Error("Karpenter Nodepool Usage 사용량 조회 중 오류 발생", err)
+		slog.Error("Karpenter Nodepool Usage 사용량 조회 중 오류 발생", "error", err)
 		return 0, err
 	}
 
 	podRequest, err := GetKarpenterPodRequest(clientSet, resourceType)
 	if err != nil {
-		slog.Error("Karpenter Allocatable 사용량 조회 중 오류 발생", err)
+		slog.Error("Karpenter Allocatable 사용량 조회 중 오류 발생", "error", err)
 		return 0, err
 	}
 
