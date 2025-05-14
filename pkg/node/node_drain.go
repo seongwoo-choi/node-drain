@@ -146,7 +146,7 @@ func handleDrain(clientSet kubernetes.Interface, nodes *coreV1.NodeList, drainNo
 
 func drainSingleNode(clientSet kubernetes.Interface, nodeName string) error {
 	config := &pod.EvictionConfig{
-		MaxConcurrentEvictions: 5,
+		MaxConcurrentEvictions: 2,
 		MaxRetries:             3,
 		RetryBackoffDuration:   5 * time.Second,
 		PodDeletionTimeout:     2 * time.Minute,

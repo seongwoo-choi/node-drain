@@ -166,15 +166,30 @@ func evictPod(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Po
 
 	slog.Info("파드 eviction 시작", "pod", pod.Name)
 
-	return clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metaV1.DeleteOptions{
+	err := clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metaV1.DeleteOptions{
 		GracePeriodSeconds: &gracePeriod,
 		PropagationPolicy:  &propagationPolicy,
 	})
+
+	// Pod가 이미 없는 경우 성공으로 처리
+	if errors.IsNotFound(err) {
+		slog.Info("파드가 이미 제거됨", "pod", pod.Name)
+		return nil
+	}
+
+	return err
 }
 
 // waitForPodDeletion은 파드가 완전히 삭제될 때까지 대기합니다
 func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod, config *EvictionConfig) error {
 	deadline := time.Now().Add(config.PodDeletionTimeout)
+
+	// 파드 상태 첫 확인 시 NotFound이면 바로 성공 처리
+	_, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
+	if errors.IsNotFound(err) {
+		slog.Info("파드가 이미 제거됨", "pod", pod.Name)
+		return nil // 파드가 이미 삭제됨
+	}
 
 	for time.Now().Before(deadline) {
 		_, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
