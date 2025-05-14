@@ -8,6 +8,7 @@ import (
 	"time"
 
 	coreV1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -23,14 +24,28 @@ type EvictionConfig struct {
 	CheckInterval          time.Duration // 상태 확인 주기
 }
 
+// PDB 캐시를 위한 구조체
+type pdbCache struct {
+	sync.RWMutex
+	cache map[string][]*policyv1.PodDisruptionBudget // namespace -> PDBs
+	ttl   time.Duration
+	last  time.Time
+}
+
+// 글로벌 PDB 캐시
+var globalPDBCache = &pdbCache{
+	cache: make(map[string][]*policyv1.PodDisruptionBudget),
+	ttl:   30 * time.Second, // 캐시 유효 시간
+}
+
 // DefaultEvictionConfig는 기본 설정값을 제공합니다
 func DefaultEvictionConfig() *EvictionConfig {
 	return &EvictionConfig{
-		MaxConcurrentEvictions: 2,
+		MaxConcurrentEvictions: 1, // 동시 eviction 감소
 		MaxRetries:             3,
-		RetryBackoffDuration:   5 * time.Second,
+		RetryBackoffDuration:   10 * time.Second, // 재시도 간격 증가
 		PodDeletionTimeout:     2 * time.Minute,
-		CheckInterval:          2 * time.Second,
+		CheckInterval:          7 * time.Second, // 상태 확인 간격 증가
 	}
 }
 
@@ -131,13 +146,12 @@ func evictPodWithRetry(ctx context.Context, clientSet kubernetes.Interface, pod 
 
 // checkPDB는 PodDisruptionBudget을 체크합니다
 func checkPDB(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod) error {
-	// PDB 조회 및 체크 로직
-	pdbList, err := clientSet.PolicyV1().PodDisruptionBudgets(pod.Namespace).List(ctx, metaV1.ListOptions{})
+	pdbs, err := getPDBsWithCache(ctx, clientSet, pod.Namespace)
 	if err != nil {
 		return fmt.Errorf("PDB 조회 실패: %v", err)
 	}
 
-	for _, pdb := range pdbList.Items {
+	for _, pdb := range pdbs {
 		selector, err := metaV1.LabelSelectorAsSelector(pdb.Spec.Selector)
 		if err != nil {
 			slog.ErrorContext(ctx, "PDB 레이블 선택자 변환 실패",
@@ -146,6 +160,7 @@ func checkPDB(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Po
 			continue
 		}
 		if selector.Matches(labels.Set(pod.Labels)) {
+			// 테스트에서는 Status.DisruptionsAllowed가 직접 설정될 수 있음
 			if pdb.Status.DisruptionsAllowed < 1 {
 				return fmt.Errorf("PDB %s에 의해 eviction이 제한됨 (현재 허용된 disruption: %d)",
 					pdb.Name, pdb.Status.DisruptionsAllowed)
@@ -157,6 +172,43 @@ func checkPDB(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Po
 	}
 
 	return nil
+}
+
+// getPDBsWithCache는 캐시된 PDB 정보를 반환하거나 API에서 가져옵니다
+func getPDBsWithCache(ctx context.Context, clientSet kubernetes.Interface, namespace string) ([]*policyv1.PodDisruptionBudget, error) {
+	globalPDBCache.RLock()
+	now := time.Now()
+	// 캐시가 유효한지 확인
+	if pdbs, ok := globalPDBCache.cache[namespace]; ok && now.Sub(globalPDBCache.last) < globalPDBCache.ttl {
+		globalPDBCache.RUnlock()
+		return pdbs, nil
+	}
+	globalPDBCache.RUnlock()
+
+	// 캐시가 없거나 만료된 경우 새로 조회
+	globalPDBCache.Lock()
+	defer globalPDBCache.Unlock()
+
+	// 다른 고루틴이 이미 캐시를 업데이트했는지 다시 확인
+	if pdbs, ok := globalPDBCache.cache[namespace]; ok && now.Sub(globalPDBCache.last) < globalPDBCache.ttl {
+		return pdbs, nil
+	}
+
+	pdbList, err := clientSet.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metaV1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	var pdbs []*policyv1.PodDisruptionBudget
+	for i := range pdbList.Items {
+		pdbs = append(pdbs, &pdbList.Items[i])
+	}
+
+	// 캐시 업데이트
+	globalPDBCache.cache[namespace] = pdbs
+	globalPDBCache.last = time.Now()
+
+	return pdbs, nil
 }
 
 // evictPod는 개별 파드에 대한 eviction을 수행합니다
@@ -191,6 +243,12 @@ func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod
 		return nil // 파드가 이미 삭제됨
 	}
 
+	if err != nil {
+		slog.Warn("파드 상태 확인 중 오류 발생, 일시적인 오류로 간주하고 계속 진행",
+			"pod", pod.Name, "error", err)
+		// 오류가 있더라도 일시적인 것으로 간주하고 계속 진행
+	}
+
 	for time.Now().Before(deadline) {
 		_, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
 		if errors.IsNotFound(err) {
@@ -199,7 +257,9 @@ func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod
 		}
 
 		if err != nil {
-			return fmt.Errorf("파드 상태 확인 실패: %v", err)
+			// API 서버 오류는 파드가 아직 있다고 가정하고 일시적인 오류로 간주
+			slog.Warn("파드 상태 확인 중 일시적 오류, 계속 진행",
+				"pod", pod.Name, "error", err)
 		}
 
 		time.Sleep(config.CheckInterval)
