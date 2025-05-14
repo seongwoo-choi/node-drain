@@ -60,6 +60,10 @@ on:
         description: 'AWS 계정 ID 입니다.'
         required: true
         default: '123456789012'
+      SLACK_WEBHOOK_URL:
+        description: 'Slack 웹훅 URL 입니다.'
+        required: true
+        default: 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXX'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
