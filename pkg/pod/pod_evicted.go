@@ -304,6 +304,9 @@ func isBatchJob(pod coreV1.Pod) bool {
 
 // isRateLimitError는 에러가 rate limit 관련 에러인지 확인합니다
 func isRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
 	return strings.Contains(err.Error(), "rate limit") ||
 		strings.Contains(err.Error(), "too many requests")
 }
