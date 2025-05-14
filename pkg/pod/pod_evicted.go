@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -234,7 +235,13 @@ func evictPod(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Po
 
 // waitForPodDeletion은 파드가 완전히 삭제될 때까지 대기합니다
 func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod, config *EvictionConfig) error {
-	deadline := time.Now().Add(config.PodDeletionTimeout)
+	// Batch 작업인지 확인하고 타임아웃 조정
+	timeoutMultiplier := 1.0
+	if isBatchJob(pod) {
+		timeoutMultiplier = 1.5 // Batch 작업은 더 긴 타임아웃
+	}
+
+	deadline := time.Now().Add(time.Duration(float64(config.PodDeletionTimeout) * timeoutMultiplier))
 
 	// 파드 상태 첫 확인 시 NotFound이면 바로 성공 처리
 	_, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
@@ -263,14 +270,42 @@ func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod
 		time.Sleep(config.CheckInterval)
 	}
 
-	// 타임아웃 발생 전 마지막 확인
+	// 타임아웃 발생 전 마지막 확인 시 rate limit으로 인한 오류 고려
 	_, err = clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
 	if errors.IsNotFound(err) {
 		slog.Info("타임아웃 직전 확인에서 파드 제거 확인됨", "pod", pod.Name)
 		return nil
 	}
 
+	// rate limit 에러는 무시하고 타임아웃 처리
+	if err != nil && isRateLimitError(err) {
+		slog.Warn("rate limit으로 인해 파드 상태 확인 불가, 파드가 삭제되었다고 가정",
+			"pod", pod.Name, "error", err)
+		return nil
+	}
+
 	return fmt.Errorf("파드 삭제 타임아웃: %s", pod.Name)
+}
+
+// isBatchJob은 파드가 Job 또는 CronJob에 속하는지 확인합니다
+func isBatchJob(pod coreV1.Pod) bool {
+	for _, ref := range pod.OwnerReferences {
+		if ref.Kind == "Job" || ref.Kind == "CronJob" {
+			return true
+		}
+	}
+
+	// 이름에 'job', 'cron', 'batch' 포함 여부 확인 (추가적인 방법)
+	podName := pod.Name
+	return strings.Contains(strings.ToLower(podName), "job") ||
+		strings.Contains(strings.ToLower(podName), "cron") ||
+		strings.Contains(strings.ToLower(podName), "batch")
+}
+
+// isRateLimitError는 에러가 rate limit 관련 에러인지 확인합니다
+func isRateLimitError(err error) bool {
+	return strings.Contains(err.Error(), "rate limit") ||
+		strings.Contains(err.Error(), "too many requests")
 }
 
 func GetNonCriticalPods(clientSet kubernetes.Interface, nodeName string) ([]coreV1.Pod, error) {
