@@ -246,7 +246,6 @@ func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod
 	if err != nil {
 		slog.Warn("파드 상태 확인 중 오류 발생, 일시적인 오류로 간주하고 계속 진행",
 			"pod", pod.Name, "error", err)
-		// 오류가 있더라도 일시적인 것으로 간주하고 계속 진행
 	}
 
 	for time.Now().Before(deadline) {
@@ -257,12 +256,18 @@ func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod
 		}
 
 		if err != nil {
-			// API 서버 오류는 파드가 아직 있다고 가정하고 일시적인 오류로 간주
 			slog.Warn("파드 상태 확인 중 일시적 오류, 계속 진행",
 				"pod", pod.Name, "error", err)
 		}
 
 		time.Sleep(config.CheckInterval)
+	}
+
+	// 타임아웃 발생 전 마지막 확인
+	_, err = clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
+	if errors.IsNotFound(err) {
+		slog.Info("타임아웃 직전 확인에서 파드 제거 확인됨", "pod", pod.Name)
+		return nil
 	}
 
 	return fmt.Errorf("파드 삭제 타임아웃: %s", pod.Name)
