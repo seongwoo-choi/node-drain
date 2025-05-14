@@ -45,7 +45,7 @@ func DefaultEvictionConfig() *EvictionConfig {
 		MaxRetries:             3,
 		RetryBackoffDuration:   10 * time.Second, // 재시도 간격 증가
 		PodDeletionTimeout:     2 * time.Minute,
-		CheckInterval:          15 * time.Second, // 상태 확인 간격 증가
+		CheckInterval:          10 * time.Second, // 상태 확인 간격 증가
 	}
 }
 
