@@ -145,15 +145,16 @@ func handleDrain(clientSet kubernetes.Interface, nodes *coreV1.NodeList, drainNo
 }
 
 func drainSingleNode(clientSet kubernetes.Interface, nodeName string) error {
-	config := &pod.EvictionConfig{
-		MaxConcurrentEvictions: 1,
-		MaxRetries:             3,
-		RetryBackoffDuration:   10 * time.Second,
-		PodDeletionTimeout:     2 * time.Minute,
-		CheckInterval:          7 * time.Second,
-	}
+	// config := &pod.EvictionConfig{
+	// 	MaxConcurrentEvictions: 1,
+	// 	MaxRetries:             3,
+	// 	RetryBackoffDuration:   10 * time.Second,
+	// 	PodDeletionTimeout:     2 * time.Minute,
+	// 	CheckInterval:          10 * time.Second,
+	// }
 
-	err := pod.EvictPods(clientSet, nodeName, config)
+	// default config 사용을 위해 nil 로 전달
+	err := pod.EvictPods(clientSet, nodeName, nil)
 	if err != nil {
 		return fmt.Errorf("노드 %s 에서 파드를 제거하는 중 오류가 발생했습니다.: %w", nodeName, err)
 	}
