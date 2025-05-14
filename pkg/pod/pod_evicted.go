@@ -164,6 +164,8 @@ func evictPod(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Po
 	gracePeriod := int64(60)
 	propagationPolicy := metaV1.DeletePropagationOrphan
 
+	slog.Info("파드 eviction 시작", "pod", pod.Name)
+
 	return clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metaV1.DeleteOptions{
 		GracePeriodSeconds: &gracePeriod,
 		PropagationPolicy:  &propagationPolicy,
@@ -177,6 +179,7 @@ func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod
 	for time.Now().Before(deadline) {
 		_, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
 		if errors.IsNotFound(err) {
+			slog.Info("파드 eviction 완료", "pod", pod.Name)
 			return nil // 파드가 정상적으로 삭제됨
 		}
 
