@@ -101,11 +101,65 @@ func TestEvictPods(t *testing.T) {
 	}
 }
 
+func TestEvictPod(t *testing.T) {
+	tests := []struct {
+		name          string
+		pod           coreV1.Pod
+		podExists     bool
+		expectedError bool
+	}{
+		{
+			name: "존재하는 파드 제거",
+			pod: coreV1.Pod{
+				ObjectMeta: metaV1.ObjectMeta{
+					Name:      "exist-pod",
+					Namespace: "default",
+				},
+			},
+			podExists:     true,
+			expectedError: false,
+		},
+		{
+			name: "존재하지 않는 파드 제거",
+			pod: coreV1.Pod{
+				ObjectMeta: metaV1.ObjectMeta{
+					Name:      "non-exist-pod",
+					Namespace: "default",
+				},
+			},
+			podExists:     false,
+			expectedError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
+
+			// 파드가 존재하는 경우에만 생성
+			if tt.podExists {
+				_, err := client.CoreV1().Pods(tt.pod.Namespace).Create(context.Background(), &tt.pod, metaV1.CreateOptions{})
+				if err != nil {
+					t.Fatalf("파드 생성 실패: %v", err)
+				}
+			}
+
+			// evictPod 테스트
+			err := evictPod(context.Background(), client, tt.pod)
+
+			if (err != nil) != tt.expectedError {
+				t.Errorf("evictPod() error = %v, expectedError %v", err, tt.expectedError)
+			}
+		})
+	}
+}
+
 func TestWaitForPodDeletion(t *testing.T) {
 	tests := []struct {
 		name          string
 		pod           coreV1.Pod
 		config        *EvictionConfig
+		deletePod     bool
 		expectedError bool
 	}{
 		{
@@ -117,6 +171,7 @@ func TestWaitForPodDeletion(t *testing.T) {
 				},
 			},
 			config:        DefaultEvictionConfig(),
+			deletePod:     true,
 			expectedError: false,
 		},
 		{
@@ -131,7 +186,20 @@ func TestWaitForPodDeletion(t *testing.T) {
 				PodDeletionTimeout: 1 * time.Second,
 				CheckInterval:      100 * time.Millisecond,
 			},
+			deletePod:     false,
 			expectedError: true,
+		},
+		{
+			name: "파드가 이미 존재하지 않음",
+			pod: coreV1.Pod{
+				ObjectMeta: metaV1.ObjectMeta{
+					Name:      "pod-3",
+					Namespace: "default",
+				},
+			},
+			config:        DefaultEvictionConfig(),
+			deletePod:     false, // 파드를 생성하지 않음
+			expectedError: false,
 		},
 	}
 
@@ -139,13 +207,15 @@ func TestWaitForPodDeletion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			client := fake.NewSimpleClientset()
 
-			// 테스트용 파드 추가
-			_, err := client.CoreV1().Pods(tt.pod.Namespace).Create(context.Background(), &tt.pod, metaV1.CreateOptions{})
-			if err != nil {
-				t.Fatalf("파드 생성 실패: %v", err)
+			if tt.name != "파드가 이미 존재하지 않음" {
+				// 테스트용 파드 추가
+				_, err := client.CoreV1().Pods(tt.pod.Namespace).Create(context.Background(), &tt.pod, metaV1.CreateOptions{})
+				if err != nil {
+					t.Fatalf("파드 생성 실패: %v", err)
+				}
 			}
 
-			if tt.name == "파드가 정상적으로 삭제됨" {
+			if tt.deletePod {
 				// 파드를 삭제하여 테스트 케이스 준비
 				err := client.CoreV1().Pods(tt.pod.Namespace).Delete(context.Background(), tt.pod.Name, metaV1.DeleteOptions{})
 				if err != nil {
@@ -153,7 +223,7 @@ func TestWaitForPodDeletion(t *testing.T) {
 				}
 			}
 
-			err = waitForPodDeletion(context.Background(), client, tt.pod, tt.config)
+			err := waitForPodDeletion(context.Background(), client, tt.pod, tt.config)
 
 			if (err != nil) != tt.expectedError {
 				t.Errorf("waitForPodDeletion() error = %v, expectedError %v", err, tt.expectedError)
@@ -204,6 +274,62 @@ func TestGetNonCriticalPods(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(pods))
 	assert.Equal(t, "normal-pod", pods[0].Name)
+}
+
+func TestEvictPodWithRetry(t *testing.T) {
+	tests := []struct {
+		name          string
+		pod           coreV1.Pod
+		config        *EvictionConfig
+		podExists     bool
+		expectedError bool
+	}{
+		{
+			name: "정상적인 파드 제거",
+			pod: coreV1.Pod{
+				ObjectMeta: metaV1.ObjectMeta{
+					Name:      "pod-1",
+					Namespace: "default",
+				},
+			},
+			config:        DefaultEvictionConfig(),
+			podExists:     true,
+			expectedError: false,
+		},
+		{
+			name: "파드가 이미 존재하지 않음",
+			pod: coreV1.Pod{
+				ObjectMeta: metaV1.ObjectMeta{
+					Name:      "pod-2",
+					Namespace: "default",
+				},
+			},
+			config:        DefaultEvictionConfig(),
+			podExists:     false,
+			expectedError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
+
+			if tt.podExists {
+				// 테스트용 파드 추가
+				_, err := client.CoreV1().Pods(tt.pod.Namespace).Create(context.Background(), &tt.pod, metaV1.CreateOptions{})
+				if err != nil {
+					t.Fatalf("파드 생성 실패: %v", err)
+				}
+			}
+
+			// evictPodWithRetry 테스트
+			err := evictPodWithRetry(context.Background(), client, tt.pod, tt.config)
+
+			if (err != nil) != tt.expectedError {
+				t.Errorf("evictPodWithRetry() error = %v, expectedError %v", err, tt.expectedError)
+			}
+		})
+	}
 }
 
 func TestIsManagedByDaemonSet(t *testing.T) {
