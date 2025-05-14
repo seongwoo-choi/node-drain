@@ -66,12 +66,24 @@ func EvictPods(clientSet kubernetes.Interface, nodeName string, config *Eviction
 		return fmt.Errorf("노드 %s 에서 데몬셋을 제외한 파드를 가져오는 중 오류가 발생했습니다.: %v", nodeName, err)
 	}
 
+	// 파드 리스트를 일반 파드와 문제 파드로 분류
+	var normalPods, problemPods []coreV1.Pod
+
+	for _, pod := range pods {
+		podObj, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
+		if err == nil && isPodInProblemState(podObj) {
+			problemPods = append(problemPods, pod)
+		} else {
+			normalPods = append(normalPods, pod)
+		}
+	}
+
 	// 동시성 제한을 위한 세마포어
 	semaphore := make(chan struct{}, config.MaxConcurrentEvictions)
 	var wg sync.WaitGroup
-	errChan := make(chan error, len(pods))
+	errChan := make(chan error, len(normalPods))
 
-	for _, pod := range pods {
+	for _, pod := range normalPods {
 		wg.Add(1)
 		go func(p coreV1.Pod) {
 			defer wg.Done()
@@ -91,6 +103,24 @@ func EvictPods(clientSet kubernetes.Interface, nodeName string, config *Eviction
 	var errs []error
 	for err := range errChan {
 		errs = append(errs, err)
+	}
+
+	if len(problemPods) > 0 {
+		slog.Info("문제 상태의 파드 강제 제거 시작",
+			"nodeName", nodeName,
+			"count", len(problemPods))
+
+		for _, pod := range problemPods {
+			// 강제 삭제 시도 (gracePeriod=0)
+			gracePeriod := int64(0)
+			err := clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metaV1.DeleteOptions{
+				GracePeriodSeconds: &gracePeriod,
+			})
+
+			if err != nil && !errors.IsNotFound(err) {
+				errs = append(errs, fmt.Errorf("문제 파드 %s 강제 제거 실패: %v", pod.Name, err))
+			}
+		}
 	}
 
 	if len(errs) > 0 {
@@ -214,23 +244,63 @@ func getPDBsWithCache(ctx context.Context, clientSet kubernetes.Interface, names
 
 // evictPod는 개별 파드에 대한 eviction을 수행합니다
 func evictPod(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod) error {
+	// 파드 상태 확인
+	podObj, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
+	if errors.IsNotFound(err) {
+		slog.Info("파드가 이미 제거됨", "pod", pod.Name)
+		return nil
+	}
+
+	// 파드가 문제 상태인지 확인 (ImagePullBackOff 등)
+	isProblemState := isPodInProblemState(podObj)
+
 	gracePeriod := int64(60)
+	if isProblemState {
+		// 문제 상태 파드는 짧은 gracePeriod로 강제 삭제
+		gracePeriod = int64(0)
+		slog.Info("문제 상태 파드 강제 삭제", "pod", pod.Name, "status", podObj.Status.Phase)
+	}
+
 	propagationPolicy := metaV1.DeletePropagationOrphan
 
 	slog.Info("파드 eviction 시작", "pod", pod.Name)
 
-	err := clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metaV1.DeleteOptions{
+	err = clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metaV1.DeleteOptions{
 		GracePeriodSeconds: &gracePeriod,
 		PropagationPolicy:  &propagationPolicy,
 	})
 
-	// Pod가 이미 없는 경우 성공으로 처리
 	if errors.IsNotFound(err) {
 		slog.Info("파드가 이미 제거됨", "pod", pod.Name)
 		return nil
 	}
 
 	return err
+}
+
+// 문제가 있는 파드 상태 확인 함수
+func isPodInProblemState(pod *coreV1.Pod) bool {
+	// ImagePullBackOff, ErrImagePull 등의 상태 확인
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		if containerStatus.State.Waiting != nil {
+			reason := containerStatus.State.Waiting.Reason
+			if reason == "ImagePullBackOff" ||
+				reason == "ErrImagePull" ||
+				reason == "CrashLoopBackOff" {
+				return true
+			}
+		}
+	}
+
+	// 오랫동안 Pending 상태인 파드도 확인
+	if pod.Status.Phase == coreV1.PodPending {
+		// 파드 생성 시간이 오래된 경우 (10분 이상)
+		if time.Since(pod.CreationTimestamp.Time) > 10*time.Minute {
+			return true
+		}
+	}
+
+	return false
 }
 
 // waitForPodDeletion은 파드가 완전히 삭제될 때까지 대기합니다

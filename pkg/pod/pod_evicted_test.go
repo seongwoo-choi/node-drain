@@ -560,3 +560,38 @@ func TestIsManagedByDaemonSet(t *testing.T) {
 		})
 	}
 }
+
+func TestEvictProblemPods(t *testing.T) {
+	// ImagePullBackOff 상태의 파드 생성
+	problemPod := &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "problem-pod",
+			Namespace: "default",
+		},
+		Status: coreV1.PodStatus{
+			Phase: coreV1.PodPending,
+			ContainerStatuses: []coreV1.ContainerStatus{
+				{
+					Name: "main-container",
+					State: coreV1.ContainerState{
+						Waiting: &coreV1.ContainerStateWaiting{
+							Reason:  "ImagePullBackOff",
+							Message: "Back-off pulling image",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	client := fake.NewSimpleClientset()
+	_, err := client.CoreV1().Pods(problemPod.Namespace).Create(context.Background(), problemPod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	// isPodInProblemState 함수 테스트
+	assert.True(t, isPodInProblemState(problemPod))
+
+	// evictPod 함수 테스트 (강제 삭제 옵션 사용)
+	err = evictPod(context.Background(), client, *problemPod)
+	assert.NoError(t, err)
+}
