@@ -65,10 +65,6 @@ on:
         required: true
         default: 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXX'
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true # 동시에 실행되는 github action 을 취소 - 취소 시 이전 작업이 취소되는 것이 아니라 동시에 실행되는 작업이 취소됨
-
 jobs:
   run:
     name: Drain EKS Node based on karpenter allocate rate
