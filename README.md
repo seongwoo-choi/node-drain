@@ -18,7 +18,7 @@ node drain
 ```sh
 go run main.go drain \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "orgainization-dev" \
+  --prometheus-org-id "organization-dev" \
   --nodepool-name "worker-nodepool-name" \
   --slack-webhook-url "https://hooks.slack.com/services/XXXXXXXX" \
   --kube-config "local" \
@@ -29,7 +29,7 @@ karpenter allocate rate
 ```sh
 go run main.go karpenter allocate-rate \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "orgainization-dev" \
+  --prometheus-org-id "organization-dev" \
   --nodepool-name "worker-nodepool-name" \
   --kube-config "local" \
   --cluster-name "devel_eks_cluster"

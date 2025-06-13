@@ -31,11 +31,11 @@ on:
         description: '프로메테우스 미미르 프록시 org-id 입니다.'
         type: choice
         options:
-          - 'orgainization-dev'
-          - 'orgainization-alp'
-          - 'orgainization-prd'
+          - 'organization-dev'
+          - 'organization-alp'
+          - 'organization-prd'
         required: true
-        default: 'orgainization-dev'
+        default: 'organization-dev'
       NODEPOOL_NAME:
         description: '드레인 하려는 Nodepool 이름입니다.'
         type: choice
