@@ -37,6 +37,37 @@ go run main.go karpenter allocate-rate \
 
 ## 워크로드 노드 정리 플로우
 
+```
++------------------------------------------------------------+
+|                      node-manager CLI                      |
++-------------------+----------------------+-----------------+
+| Drain Command     | Karpenter Command    | Root Command    |
+| (cmd/drain.go)    | (cmd/karpenter.go)   | (cmd/root.go)   |
++-------------------+----------------------+-----------------+
+               |                 |
+               |                 +-------------------------------+
+               |                            Prometheus
+               |                 +-------------------------------+
++--------------v---------------+                                  
+| Kubernetes Client (config)  |                                  
+| - kube_client_set.go        |                                  
+| - prometheus_client.go      |                                  
++--------------+--------------+                                  
+               |                                              
+               |                                              
++--------------v--------------+    +--------------------------+
+| Node Drain Logic            |    | Slack Notification       |
+| (pkg/node/node_drain.go)    |    | (pkg/notification)       |
++--------------+--------------+    +-------------+------------+
+               |                               |
+               |                               |
+         +-----v-----+                    +----v----+
+         | Pod Evict |                    | Slack   |
+         | (pkg/pod) |                    | Webhook |
+         +-----------+                    +---------+
+
+```
+
 ### 정리 대상 노드 식별
 karpenter allocate rate 를 통해 노드 드레인 대수를 정합니다.
 
