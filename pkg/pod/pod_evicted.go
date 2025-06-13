@@ -42,7 +42,7 @@ var globalPDBCache = &pdbCache{
 // DefaultEvictionConfig는 기본 설정값을 제공합니다
 func DefaultEvictionConfig() *EvictionConfig {
 	return &EvictionConfig{
-		MaxConcurrentEvictions: 2, // 동시 eviction 감소
+		MaxConcurrentEvictions: 10, // 동시 eviction 감소
 		MaxRetries:             3,
 		RetryBackoffDuration:   10 * time.Second, // 재시도 간격 증가
 		PodDeletionTimeout:     2 * time.Minute,
