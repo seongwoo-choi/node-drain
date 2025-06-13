@@ -94,9 +94,18 @@ func getDrainNodeCount(clientSet kubernetes.Interface, lenNodes int) (int, error
 	slog.Info("최대 사용률", "maxAllocateRate", maxAllocateRate)
 
 	drainRate := float64(99-maxAllocateRate) / 100.0
+	if drainRate < 0 {
+		drainRate = 0
+	}
 	slog.Info("드레인 비율", "drainRate", drainRate)
 
 	drainNodeCount := int(float64(lenNodes) * drainRate)
+	if drainNodeCount < 0 {
+		drainNodeCount = 0
+	}
+	if drainNodeCount > lenNodes {
+		drainNodeCount = lenNodes
+	}
 
 	return drainNodeCount, nil
 }
