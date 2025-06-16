@@ -8,13 +8,16 @@ kube context 를 변경하여 EKS 워크로드 노드를 드레인하고 싶은 
 
 K9S 혹은 Open Lens 를 사용하여 deployment 접근, mimir 검색 후 8080:8080 으로 포트포워딩
 
+아래 예시는 devel_eks_cluster, 개발 클러스터에서 command 를 실행하는 예시입니다.
+
 포트포워딩 설정 이후 아래 스크립트를 실행합니다.
 
 ```sh
 go mod tidy
 ```
 
-node drain
+drain command 는 지정한 노드풀의 워크로드 노드를 안전하게 비우고 교체할 수 있도록 파드들을 순차적으로 다른 노드로 이동시키는 커맨드입니다. 진행 상황은 슬랙 알림 등으로 모니터링할 수 있습니다.
+
 ```sh
 go run main.go drain \
   --prometheus-address "http://localhost:8080/prometheus" \
@@ -25,7 +28,8 @@ go run main.go drain \
   --cluster-name "devel_eks_cluster"
 ```
 
-karpenter allocate rate
+karpenter allocate rate command 는 Karpenter가 자동으로 노드를 할당하는 비율을 조회하여, 동시에 몇 대의 노드를 드레인할지 결정하는 데 참고할 수 있는 정보를 제공합니다.
+
 ```sh
 go run main.go karpenter allocate-rate \
   --prometheus-address "http://localhost:8080/prometheus" \
