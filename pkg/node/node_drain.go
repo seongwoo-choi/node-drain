@@ -162,7 +162,6 @@ func drainSingleNode(clientSet kubernetes.Interface, nodeName string) error {
 		CheckInterval:          10 * time.Second,
 	}
 
-	// default config 사용을 위해 nil 로 전달
 	err := pod.EvictPods(clientSet, nodeName, config)
 	if err != nil {
 		return fmt.Errorf("노드 %s 에서 파드를 제거하는 중 오류가 발생했습니다.: %w", nodeName, err)
@@ -172,7 +171,7 @@ func drainSingleNode(clientSet kubernetes.Interface, nodeName string) error {
 		return fmt.Errorf("노드 %s 에서 파드가 종료되는 중 오류가 발생했습니다.: %w", nodeName, err)
 	}
 
-	time.Sleep(150 * time.Second)
+	time.Sleep(50 * time.Second)
 
 	return nil
 }
