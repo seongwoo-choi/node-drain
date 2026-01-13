@@ -35,6 +35,7 @@ func TestDrainSingleNode(t *testing.T) {
 		RetryBackoffDuration:   1 * time.Second,
 		PodDeletionTimeout:     10 * time.Second,
 		CheckInterval:          1 * time.Second,
+		EvictionMode:           pod.EvictionModeDelete, // fake client에서 eviction(subresource) 삭제 반영이 어려워 delete 모드로 테스트
 	}
 
 	tests := []struct {

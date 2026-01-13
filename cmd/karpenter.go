@@ -24,7 +24,7 @@ var (
 			kubeConfig := os.Getenv("KUBE_CONFIG")
 			clientSet, err := config.GetKubeClientSet(kubeConfig)
 			if err != nil {
-				slog.Error("쿠버네티스 클라이언트를 가져오는 중 오류가 발생했습니다.", err)
+				slog.Error("쿠버네티스 클라이언트를 가져오는 중 오류가 발생했습니다.", "error", err)
 				return
 			}
 			handleKarpenterAllocateRate(clientSet)
@@ -36,13 +36,13 @@ func handleKarpenterAllocateRate(clientSet kubernetes.Interface) {
 	slog.Info("Karpenter Allocate Rate 사용량 조회 커맨드를 실행합니다.")
 	memoryAllocateRate, err := karpenter.GetAllocateRate(clientSet, "memory")
 	if err != nil {
-		slog.Error("Karpenter Memory Allocate Rate 사용량 조회 중 오류가 발생했습니다.: ", err)
+		slog.Error("Karpenter Memory Allocate Rate 사용량 조회 중 오류가 발생했습니다.", "error", err)
 		return
 	}
 
 	cpuAllocateRate, err := karpenter.GetAllocateRate(clientSet, "cpu")
 	if err != nil {
-		slog.Error("Karpenter Cpu Allocate Rate 사용량 조회 중 오류가 발생했습니다.: ", err)
+		slog.Error("Karpenter Cpu Allocate Rate 사용량 조회 중 오류가 발생했습니다.", "error", err)
 		return
 	}
 	slog.Info("Karpenter", "memoryAllocateRate", fmt.Sprintf("%d %%", memoryAllocateRate))

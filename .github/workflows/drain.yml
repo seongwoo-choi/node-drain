@@ -1,0 +1,124 @@
+name: drain
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: "클러스터 이름(알림/로그 표시용)"
+        required: true
+        type: string
+      nodepool_name:
+        description: "드레인 대상 Karpenter NodePool 이름"
+        required: true
+        type: string
+      kube_config_mode:
+        description: "KUBE_CONFIG 모드(local|cluster|github_action)"
+        required: true
+        default: "github_action"
+        type: string
+      prometheus_address:
+        description: "Prometheus/Mimir 주소 (예: http://prometheus.monitoring.svc:9090/prometheus)"
+        required: true
+        type: string
+      prometheus_org_id:
+        description: "Prometheus OrgID(X-Scope-OrgID)"
+        required: true
+        default: "organization-dev"
+        type: string
+
+      # 드레인 정책(기본값은 기존 동작과 동일하게 두고, 워크플로우에서 안전한 권장값을 넣기 쉽도록 inputs 제공)
+      drain_min:
+        description: "드레인 최소 노드 수(0=비활성)"
+        required: false
+        default: "1"
+        type: string
+      drain_max_absolute:
+        description: "드레인 최대 노드 수(절대값, 0=비활성)"
+        required: false
+        default: "2"
+        type: string
+      drain_max_fraction:
+        description: "드레인 최대 비율(예: 0.2=20%, 0=비활성)"
+        required: false
+        default: "0.2"
+        type: string
+      drain_safety_max_allocate_rate:
+        description: "안전 조건: maxAllocateRate >= 값이면 0대로 강제(0=비활성)"
+        required: false
+        default: "90"
+        type: string
+      drain_progressive:
+        description: "점진적 드레인(노드 1대 처리 후 안전 조건 재평가)"
+        required: false
+        default: "true"
+        type: string
+
+      # 파드 제거 정책
+      pod_eviction_mode:
+        description: "파드 제거 방식(evict|delete)"
+        required: false
+        default: "evict"
+        type: string
+      force:
+        description: "eviction 반복 실패 시 delete로 강제 전환"
+        required: false
+        default: "false"
+        type: string
+      force_problem_pods:
+        description: "문제 파드 즉시 delete(grace=0)"
+        required: false
+        default: "true"
+        type: string
+      pdb_token:
+        description: "같은 PDB 동시 처리 제한(토큰)"
+        required: false
+        default: "true"
+        type: string
+      pdb_token_max_in_flight:
+        description: "같은 PDB 토큰 동시 처리 개수"
+        required: false
+        default: "1"
+        type: string
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run drain
+        shell: bash
+        env:
+          # Slack은 선택 사항(비어 있으면 알림 전송만 실패하고 drain 자체는 진행됨)
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          go run main.go drain \
+            --cluster-name "${{ inputs.cluster_name }}" \
+            --nodepool-name "${{ inputs.nodepool_name }}" \
+            --kube-config "${{ inputs.kube_config_mode }}" \
+            --prometheus-address "${{ inputs.prometheus_address }}" \
+            --prometheus-org-id "${{ inputs.prometheus_org_id }}" \
+            --slack-webhook-url "${SLACK_WEBHOOK_URL:-}" \
+            --drain-min "${{ inputs.drain_min }}" \
+            --drain-max-absolute "${{ inputs.drain_max_absolute }}" \
+            --drain-max-fraction "${{ inputs.drain_max_fraction }}" \
+            --drain-safety-max-allocate-rate "${{ inputs.drain_safety_max_allocate_rate }}" \
+            --drain-progressive "${{ inputs.drain_progressive }}" \
+            --pod-eviction-mode "${{ inputs.pod_eviction_mode }}" \
+            --force "${{ inputs.force }}" \
+            --force-problem-pods "${{ inputs.force_problem_pods }}" \
+            --pdb-token "${{ inputs.pdb_token }}" \
+            --pdb-token-max-in-flight "${{ inputs.pdb_token_max_in_flight }}"
+
+

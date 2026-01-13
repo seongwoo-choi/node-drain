@@ -79,6 +79,34 @@ go run main.go drain \
 
 ---
 
+## 기본(권장) drain CLI 템플릿
+
+운영에서 “너무 많이 한 번에 드레인”되는 것을 막기 위한 **권장 기본값 예시**입니다. (환경에 맞게 조정하세요)
+
+```sh
+go run main.go drain \
+  --prometheus-address "http://localhost:8080/prometheus" \
+  --prometheus-org-id "organization-dev" \
+  --nodepool-name "worker-nodepool-name" \
+  --slack-webhook-url "https://hooks.slack.com/services/XXXXXXXX" \
+  --kube-config "local" \
+  --cluster-name "devel_eks_cluster" \
+  --drain-min 1 \
+  --drain-max-absolute 2 \
+  --drain-max-fraction 0.2 \
+  --drain-safety-max-allocate-rate 90 \
+  --drain-progressive true \
+  --pod-eviction-mode evict \
+  --pdb-token true \
+  --pdb-token-max-in-flight 1 \
+  --force-problem-pods true
+```
+
+> `--force`(eviction 실패 시 delete 폴백)은 기본 `false`를 권장합니다.  
+> 다만 운영 정책상 “어떤 상황에서도 끝까지 드레인해야 한다”면 `--force true`를 검토하세요.
+
+---
+
 ## 실행 모드(`--kube-config`)
 
 - `local`: 로컬 kubeconfig(`~/.kube/config`)를 사용해 클러스터에 접근합니다.
@@ -109,7 +137,7 @@ go run main.go drain \
 `drain` 커맨드는 기본적으로 Allocate Rate 기반 계산식을 사용하지만, 운영 환경에 맞게 아래 옵션으로 **폭주 방지/예측 가능성/안전 차단**을 추가할 수 있습니다.
 
 | 플래그 | 기본값 | 설명 |
-|---|---:|---|
+| --- | ---: | --- |
 | `--drain-policy` | `formula` | `formula`(계산식) 또는 `step`(계단식) |
 | `--drain-rounding` | `floor` | `floor`/`round`/`ceil` |
 | `--drain-min` | `0` | 최소 드레인 노드 수(0이면 비활성). 작은 클러스터의 0대 방지용 |
@@ -119,6 +147,25 @@ go run main.go drain \
 | `--drain-safety-max-allocate-rate` | `0` | `maxAllocateRate >= 값`이면 0대로 강제 |
 | `--drain-safety-queries` | `""` | PromQL 목록(세미콜론/개행 구분). 하나라도 결과가 >0이면 0대로 강제 |
 | `--drain-safety-fail-closed` | `true` | 안전 쿼리 실패 시 0대로 강제할지 |
+| `--drain-progressive` | `true` | 점진적 드레인: 노드 1대 처리 후 안전 조건 재평가로 다음 노드 진행 여부를 결정 |
+
+#### 파드 제거 정책(안전 우선 + 조건부 폴백)
+
+기본 모드는 **eviction subresource**(`--pod-eviction-mode evict`)를 사용해 PDB가 “정석대로” 적용되도록 합니다.  
+단, 운영 현실 대응을 위해 아래 옵션으로 **문제 파드 강제 삭제** 또는 **eviction 실패 시 delete 폴백**을 선택할 수 있습니다.
+
+| 플래그 | 기본값 | 설명 |
+| --- | ---: | --- |
+| `--pod-eviction-mode` | `evict` | `evict`(권장) 또는 `delete` |
+| `--force` | `false` | eviction이 반복 실패/타임아웃일 때 delete로 강제 전환 |
+| `--force-problem-pods` | `true` | 문제 파드는 즉시 delete(grace=0)로 처리 |
+| `--pdb-token` | `true` | 같은 PDB에 매칭되는 파드는 동시에 제한(토큰) |
+| `--pdb-token-max-in-flight` | `1` | 같은 PDB 토큰 동시 처리 개수 |
+| `--pod-max-concurrent` | `30` | 동시에 제거할 Pod 최대 개수 |
+| `--pod-max-retries` | `3` | Pod 제거 최대 재시도 횟수 |
+| `--pod-retry-backoff` | `10s` | Pod 제거 재시도 간격 |
+| `--pod-deletion-timeout` | `2m` | Pod 삭제 대기 타임아웃 |
+| `--pod-check-interval` | `20s` | Pod 삭제 상태 확인 주기 |
 
 ##### 예시 1) “한 번에 최대 2대, 최대 20%까지만” + “작은 클러스터 0대 방지”
 
@@ -173,7 +220,7 @@ Karpenter 관련 메트릭을 조회해 NodePool의 자원 사용률(Allocate Ra
 모든 커맨드는 아래 플래그를 공통으로 받습니다(`cmd/root.go`).
 
 | 플래그 | 기본값 | 설명 |
-|---|---:|---|
+| --- | ---: | --- |
 | `--prometheus-address` | `http://localhost:8080/prometheus` | Prometheus 서버 주소 |
 | `--prometheus-org-id` | `organization-dev` | 멀티테넌시 환경에서 사용하는 Org ID (`X-Scope-OrgID`) |
 | `--slack-webhook-url` | `""` | Slack Webhook URL (`drain`에서 권장, 미지정 시 알림 실패) |
@@ -188,13 +235,45 @@ Karpenter 관련 메트릭을 조회해 NodePool의 자원 사용률(Allocate Ra
 CLI는 실행 시 플래그 값을 아래 환경 변수로 주입합니다.
 
 | 환경 변수 | 설명 |
-|---|---|
+| --- | --- |
 | `PROMETHEUS_ADDRESS` | Prometheus 주소 |
 | `PROMETHEUS_SCOPE_ORG_ID` | `X-Scope-OrgID` 헤더 값 |
 | `SLACK_WEBHOOK_URL` | Slack Webhook URL |
 | `KUBE_CONFIG` | kube config 모드(`local/cluster/github_action`) |
 | `CLUSTER_NAME` | 클러스터 이름 |
 | `NODEPOOL_NAME` | NodePool 이름 |
+| `DRAIN_PROGRESSIVE` | 점진적 드레인 여부 |
+| `POD_EVICTION_MODE` | `evict` 또는 `delete` |
+| `POD_FORCE` | eviction 실패 시 delete 폴백 |
+| `POD_FORCE_PROBLEM_PODS` | 문제 파드 즉시 강제 삭제 |
+| `POD_PDB_TOKEN` | PDB 토큰 사용 여부 |
+| `POD_PDB_TOKEN_MAX_IN_FLIGHT` | PDB 토큰 동시 처리 개수 |
+| `POD_MAX_CONCURRENT` | 동시 처리 Pod 수 |
+| `POD_MAX_RETRIES` | 최대 재시도 횟수 |
+| `POD_RETRY_BACKOFF` | 재시도 간격 |
+| `POD_DELETION_TIMEOUT` | 삭제 대기 타임아웃 |
+| `POD_CHECK_INTERVAL` | 상태 확인 주기 |
+
+---
+
+## GitHub Actions로 drain 실행
+
+이 저장소에는 `workflow_dispatch` 기반 워크플로우 **`.github/workflows/drain.yml`**이 포함되어 있습니다.  
+GitHub UI에서 **Actions → drain → Run workflow**로 실행할 수 있습니다.
+
+### 필요한 Secrets
+
+- **`SLACK_WEBHOOK_URL`** (선택): Slack 알림을 보내려면 설정
+- **`KUBECONFIG_B64`** (선택): base64 인코딩된 kubeconfig
+  - 러너가 이미 클러스터에 접근 가능한 self-hosted 환경이면 생략해도 됩니다.
+
+> EKS를 쓰는 경우엔 `aws eks update-kubeconfig` 방식으로 kubeconfig를 만드는 스텝을 워크플로우에 추가하는 것을 권장합니다.
+
+### 주요 Inputs(워크플로우 입력값)
+
+- `cluster_name`, `nodepool_name`, `prometheus_address`, `prometheus_org_id`
+- 드레인 정책: `drain_min`, `drain_max_absolute`, `drain_max_fraction`, `drain_safety_max_allocate_rate`, `drain_progressive`
+- 파드 정책: `pod_eviction_mode`, `force`, `force_problem_pods`, `pdb_token`, `pdb_token_max_in_flight`
 
 ---
 
@@ -218,7 +297,7 @@ CLI는 실행 시 플래그 값을 아래 환경 변수로 주입합니다.
 ```text
 drainRate = (99 - maxAllocateRate) / 100
 drainNodeCount = floor(lenNodes * drainRate)
-```
+```text
 
 > 예: 최대 사용률이 63%이고 노드가 8대면 drainRate=0.36, drainNodeCount=2로 계산됩니다.
 
@@ -235,7 +314,7 @@ drainNodeCount = floor(lenNodes * drainRate)
 
 ## 아키텍처(코드 구조)
 
-```
+```text
 +------------------------------------------------------------+
 |                      node-manager CLI                      |
 +-------------------+----------------------+-----------------+
@@ -379,4 +458,3 @@ subjects:
 ```sh
 go test ./...
 ```
-

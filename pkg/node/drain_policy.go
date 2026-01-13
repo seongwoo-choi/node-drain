@@ -327,5 +327,3 @@ func clampInt(v, min, max int) int {
 	}
 	return v
 }
-
-

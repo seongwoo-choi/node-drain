@@ -74,5 +74,3 @@ func TestShouldBlockDrainBySafetyMaxAllocateRate(t *testing.T) {
 	assert.True(t, blocked)
 	assert.Contains(t, reason, ">= safetyMaxAllocateRate")
 }
-
-
