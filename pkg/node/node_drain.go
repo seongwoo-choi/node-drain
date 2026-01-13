@@ -93,19 +93,21 @@ func getDrainNodeCount(clientSet kubernetes.Interface, lenNodes int) (int, error
 	maxAllocateRate := int(math.Max(float64(memoryAllocateRate), float64(cpuAllocateRate)))
 	slog.Info("최대 사용률", "maxAllocateRate", maxAllocateRate)
 
-	drainRate := float64(99-maxAllocateRate) / 100.0
-	if drainRate < 0 {
-		drainRate = 0
-	}
-	slog.Info("드레인 비율", "drainRate", drainRate)
+	opts := GetDrainPolicyOptionsFromEnv()
 
-	drainNodeCount := int(float64(lenNodes) * drainRate)
-	if drainNodeCount < 0 {
-		drainNodeCount = 0
+	blocked, reason, safetyErr := ShouldBlockDrainBySafetyConditions(maxAllocateRate, opts)
+	if safetyErr != nil {
+		// fail-open/fail-closed는 ShouldBlockDrainBySafetyConditions에서 결정
+		slog.Warn("드레인 안전 조건 평가 중 오류", "error", safetyErr, "blocked", blocked, "reason", reason)
 	}
-	if drainNodeCount > lenNodes {
-		drainNodeCount = lenNodes
+	if blocked {
+		slog.Warn("안전 조건에 의해 드레인을 수행하지 않습니다.", "reason", reason)
+		return 0, nil
 	}
+
+	drainNodeCount := CalculateDrainNodeCount(lenNodes, maxAllocateRate, opts)
+	slog.Info("드레인 정책", "policy", opts.Policy, "rounding", opts.Rounding, "minDrain", opts.MinDrain, "maxAbs", opts.MaxDrainAbsolute, "maxFraction", opts.MaxDrainFraction)
+	slog.Info("드레인 할 노드 개수(정책 적용)", "drainNodeCount", drainNodeCount)
 
 	return drainNodeCount, nil
 }

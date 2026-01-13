@@ -104,6 +104,64 @@ go run main.go drain \
 
 지정한 NodePool의 워크로드 노드를 안전하게 비우고 교체할 수 있도록 파드를 순차적으로 다른 노드로 이동시키는 커맨드입니다. 진행 상황은 Slack 알림 및 로그로 확인할 수 있습니다.
 
+#### 드레인 정책(운영 안정화 옵션)
+
+`drain` 커맨드는 기본적으로 Allocate Rate 기반 계산식을 사용하지만, 운영 환경에 맞게 아래 옵션으로 **폭주 방지/예측 가능성/안전 차단**을 추가할 수 있습니다.
+
+| 플래그 | 기본값 | 설명 |
+|---|---:|---|
+| `--drain-policy` | `formula` | `formula`(계산식) 또는 `step`(계단식) |
+| `--drain-rounding` | `floor` | `floor`/`round`/`ceil` |
+| `--drain-min` | `0` | 최소 드레인 노드 수(0이면 비활성). 작은 클러스터의 0대 방지용 |
+| `--drain-max-absolute` | `0` | 최대 드레인 노드 수(절대값, 0이면 비활성) |
+| `--drain-max-fraction` | `0` | 최대 드레인 비율(예: `0.2`는 최대 20%, 0이면 비활성) |
+| `--drain-step-rules` | `""` | 계단식 규칙(예: `"80:1,60:2"`) |
+| `--drain-safety-max-allocate-rate` | `0` | `maxAllocateRate >= 값`이면 0대로 강제 |
+| `--drain-safety-queries` | `""` | PromQL 목록(세미콜론/개행 구분). 하나라도 결과가 >0이면 0대로 강제 |
+| `--drain-safety-fail-closed` | `true` | 안전 쿼리 실패 시 0대로 강제할지 |
+
+##### 예시 1) “한 번에 최대 2대, 최대 20%까지만” + “작은 클러스터 0대 방지”
+
+```sh
+go run main.go drain \
+  --nodepool-name "worker-nodepool-name" \
+  --cluster-name "devel_eks_cluster" \
+  --kube-config "local" \
+  --prometheus-address "http://localhost:8080/prometheus" \
+  --prometheus-org-id "organization-dev" \
+  --drain-min 1 \
+  --drain-max-absolute 2 \
+  --drain-max-fraction 0.2
+```
+
+##### 예시 2) 계단식 정책(예측 가능한 정책)
+
+```sh
+go run main.go drain \
+  --nodepool-name "worker-nodepool-name" \
+  --cluster-name "devel_eks_cluster" \
+  --kube-config "local" \
+  --prometheus-address "http://localhost:8080/prometheus" \
+  --prometheus-org-id "organization-dev" \
+  --drain-policy step \
+  --drain-step-rules "80:1,60:2"
+```
+
+##### 예시 3) 안전 조건(최근 N분 신호 기반 차단)
+
+> “최근 N분간” 조건은 PromQL에서 `increase(...[5m])`, `max_over_time(...[10m])`처럼 **range vector**를 쓰면 됩니다.
+
+```sh
+go run main.go drain \
+  --nodepool-name "worker-nodepool-name" \
+  --cluster-name "devel_eks_cluster" \
+  --kube-config "local" \
+  --prometheus-address "http://localhost:8080/prometheus" \
+  --prometheus-org-id "organization-dev" \
+  --drain-safety-max-allocate-rate 90 \
+  --drain-safety-queries "sum(increase(kube_pod_container_status_restarts_total[10m])) > 0; sum(kube_pod_status_phase{phase=\"Pending\"}) > 0"
+```
+
 ### `karpenter allocate-rate`
 
 Karpenter 관련 메트릭을 조회해 NodePool의 자원 사용률(Allocate Rate)을 계산합니다. `drain` 커맨드가 동시에 드레인할 노드 수를 산정하는 데 참고하는 값입니다.
