@@ -1,115 +1,166 @@
 package karpenter
 
 import (
-	"app/config"
+	"context"
 	"fmt"
 	"log/slog"
 	"math"
-	"os"
 	"strconv"
+	"time"
 
+	"github.com/prometheus/client_golang/api"
+	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	prometheusModel "github.com/prometheus/common/model"
-	"k8s.io/client-go/kubernetes"
 )
 
-func GetKarpenterNodesAllocatable(clientSet kubernetes.Interface, resourceType string) (int64, error) {
-	nodepool := os.Getenv("NODEPOOL_NAME")
-	prometheusClient, err := config.CreatePrometheusClient()
-	if err != nil {
-		slog.Error("Prometheus 클라이언트 생성 중 오류 발생", "error", err)
-		return 0, err
+// MetricsQuerier is a minimal contract for querying metrics backends.
+type MetricsQuerier interface {
+	Query(ctx context.Context, query string) (prometheusModel.Vector, error)
+}
+
+// AllocateRateProvider exposes allocation-rate calculations used by drain logic.
+type AllocateRateProvider interface {
+	GetAllocateRate(ctx context.Context, resourceType string) (int, error)
+}
+
+// PrometheusQuerier is a MetricsQuerier backed by Prometheus API.
+type PrometheusQuerier struct {
+	api v1.API
+}
+
+// NewPrometheusQuerier creates a Prometheus-backed metrics querier.
+func NewPrometheusQuerier(client api.Client) *PrometheusQuerier {
+	return &PrometheusQuerier{
+		api: v1.NewAPI(client),
+	}
+}
+
+// Query executes a Prometheus instant query.
+func (p *PrometheusQuerier) Query(ctx context.Context, query string) (prometheusModel.Vector, error) {
+	queryCtx := ctx
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		queryCtx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
 	}
 
-	query := fmt.Sprintf("sum(karpenter_nodes_allocatable{nodepool='%s', resource_type='%s'})", nodepool, resourceType)
+	result, warnings, err := p.api.Query(queryCtx, query, timeNow())
+	if err != nil {
+		return nil, err
+	}
+	if len(warnings) > 0 {
+		slog.Warn("프로메테우스 쿼리 warning", "warnings", warnings)
+	}
+
+	vector, ok := result.(prometheusModel.Vector)
+	if !ok {
+		return nil, fmt.Errorf("unexpected result type from Prometheus")
+	}
+	return vector, nil
+}
+
+// Client provides Karpenter usage/allocation queries.
+type Client struct {
+	nodepoolName string
+	querier      MetricsQuerier
+}
+
+// NewClient creates a Karpenter metrics client.
+func NewClient(nodepoolName string, querier MetricsQuerier) *Client {
+	return &Client{
+		nodepoolName: nodepoolName,
+		querier:      querier,
+	}
+}
+
+// GetKarpenterPodRequest returns pod request usage for a resource type.
+func (c *Client) GetKarpenterPodRequest(ctx context.Context, resourceType string) (float64, error) {
+	query := fmt.Sprintf(
+		"sum(karpenter_nodes_total_pod_requests{nodepool='%s',resource_type='%s'} + karpenter_nodes_total_daemon_requests{nodepool='%s',resource_type='%s'})",
+		c.nodepoolName,
+		resourceType,
+		c.nodepoolName,
+		resourceType,
+	)
 	slog.Info("query", "query", query)
 
-	result, err := config.QueryPrometheus(prometheusClient, query)
+	result, err := c.querier.Query(ctx, query)
 	if err != nil {
-		slog.Error("Prometheus 쿼리 중 오류 발생", "error", err)
-		return 0, err
+		return 0, fmt.Errorf("query pod request: %w", err)
 	}
-
 	return parseUsageResult(result, resourceType)
 }
 
-func GetKarpenterPodRequest(clientSet kubernetes.Interface, resourceType string) (int64, error) {
-	prometheusClient, err := config.CreatePrometheusClient()
-	if err != nil {
-		slog.Error("Prometheus 클라이언트 생성 중 오류 발생", "error", err)
-		return 0, err
-	}
-
-	nodepool := os.Getenv("NODEPOOL_NAME")
-
-	query := fmt.Sprintf("sum(karpenter_nodes_total_pod_requests{nodepool='%s',resource_type='%s'} + karpenter_nodes_total_daemon_requests{nodepool='%s',resource_type='%s'})", nodepool, resourceType, nodepool, resourceType)
+// GetKarpenterNodepoolUsage returns nodepool usage for a resource type.
+func (c *Client) GetKarpenterNodepoolUsage(ctx context.Context, resourceType string) (float64, error) {
+	query := fmt.Sprintf(
+		"karpenter_nodepool_usage{nodepool='%s', resource_type='%s'}",
+		c.nodepoolName,
+		resourceType,
+	)
 	slog.Info("query", "query", query)
 
-	result, err := config.QueryPrometheus(prometheusClient, query)
+	result, err := c.querier.Query(ctx, query)
 	if err != nil {
-		slog.Error("Prometheus 쿼리 중 오류 발생", "error", err)
-		return 0, err
+		return 0, fmt.Errorf("query nodepool usage: %w", err)
 	}
-
 	return parseUsageResult(result, resourceType)
 }
 
-func GetKarpenterNodepoolUsage(clientSet kubernetes.Interface, resourceType string) (int64, error) {
-	prometheusClient, err := config.CreatePrometheusClient()
+// GetAllocateRate returns pod-request to nodepool-usage ratio in percent.
+func (c *Client) GetAllocateRate(ctx context.Context, resourceType string) (int, error) {
+	nodepoolUsage, err := c.GetKarpenterNodepoolUsage(ctx, resourceType)
 	if err != nil {
-		slog.Error("Prometheus 클라이언트 생성 중 오류 발생", "error", err)
 		return 0, err
 	}
-
-	nodepool := os.Getenv("NODEPOOL_NAME")
-
-	query := fmt.Sprintf("karpenter_nodepool_usage{nodepool='%s', resource_type='%s'}", nodepool, resourceType)
-	slog.Info("query", "query", query)
-
-	result, err := config.QueryPrometheus(prometheusClient, query)
-	if err != nil {
-		slog.Error("Prometheus 쿼리 중 오류 발생", "error", err)
-		return 0, err
+	if nodepoolUsage <= 0 {
+		return 0, fmt.Errorf("invalid %s nodepool usage: %.2f", resourceType, nodepoolUsage)
 	}
 
-	return parseUsageResult(result, resourceType)
-}
-
-func GetAllocateRate(clientSet kubernetes.Interface, resourceType string) (int, error) {
-	nodepoolUsage, err := GetKarpenterNodepoolUsage(clientSet, resourceType)
+	podRequest, err := c.GetKarpenterPodRequest(ctx, resourceType)
 	if err != nil {
-		slog.Error("Karpenter Nodepool Usage 사용량 조회 중 오류 발생", "error", err)
-		return 0, err
-	}
-
-	podRequest, err := GetKarpenterPodRequest(clientSet, resourceType)
-	if err != nil {
-		slog.Error("Karpenter Allocatable 사용량 조회 중 오류 발생", "error", err)
 		return 0, err
 	}
 
 	switch resourceType {
 	case "memory":
-		slog.Info("Karpenter", "nodepoolUsage", fmt.Sprintf("%d GB", nodepoolUsage))
-		slog.Info("Karpenter", "podRequest", fmt.Sprintf("%d GB", podRequest))
+		slog.Info("Karpenter", "nodepoolUsage", fmt.Sprintf("%.0f GB", nodepoolUsage))
+		slog.Info("Karpenter", "podRequest", fmt.Sprintf("%.0f GB", podRequest))
 	case "cpu":
-		slog.Info("Karpenter", "nodepoolUsage", fmt.Sprintf("%d vCPU", nodepoolUsage))
-		slog.Info("Karpenter", "podRequest", fmt.Sprintf("%d vCPU", podRequest))
+		slog.Info("Karpenter", "nodepoolUsage", fmt.Sprintf("%.0f vCPU", nodepoolUsage))
+		slog.Info("Karpenter", "podRequest", fmt.Sprintf("%.0f vCPU", podRequest))
+	default:
+		return 0, fmt.Errorf("unsupported resource type: %s", resourceType)
 	}
 
-	allocateRate := math.Round(float64(podRequest) / float64(nodepoolUsage) * 100)
+	allocateRate := math.Round((podRequest / nodepoolUsage) * 100)
 	return int(allocateRate), nil
 }
 
-func parseUsageResult(result prometheusModel.Vector, resourceType string) (int64, error) {
-	for _, sample := range result {
-		if resourceType == "memory" {
-			usage, _ := strconv.ParseInt(sample.Value.String(), 10, 64)
-			usageGB := usage / (1000 * 1000 * 1000)
-			return usageGB, nil
-		} else if resourceType == "cpu" {
-			usage, _ := strconv.ParseFloat(sample.Value.String(), 64)
-			return int64(usage), nil
-		}
+func parseUsageResult(result prometheusModel.Vector, resourceType string) (float64, error) {
+	if len(result) == 0 {
+		return 0, fmt.Errorf("empty prometheus result for resource type %s", resourceType)
 	}
-	return 0, nil
+
+	sample := result[0]
+	switch resourceType {
+	case "memory":
+		usage, err := strconv.ParseFloat(sample.Value.String(), 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse memory usage: %w", err)
+		}
+		return usage / (1000 * 1000 * 1000), nil
+	case "cpu":
+		usage, err := strconv.ParseFloat(sample.Value.String(), 64)
+		if err != nil {
+			return 0, fmt.Errorf("parse cpu usage: %w", err)
+		}
+		return usage, nil
+	default:
+		return 0, fmt.Errorf("unsupported resource type: %s", resourceType)
+	}
+}
+
+var timeNow = func() time.Time {
+	return time.Now()
 }

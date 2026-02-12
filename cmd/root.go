@@ -11,6 +11,7 @@ var (
 	prometheusOrgID   string
 	slackWebhookURL   string
 	kubeConfig        string
+	kubeConfigPath    string
 	clusterName       string
 	nodepoolName      string
 )
@@ -32,6 +33,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&prometheusOrgID, "prometheus-org-id", "organization-dev", "Prometheus 조직 ID")
 	rootCmd.PersistentFlags().StringVar(&slackWebhookURL, "slack-webhook-url", "", "Slack Webhook URL")
 	rootCmd.PersistentFlags().StringVar(&kubeConfig, "kube-config", "local", "Kubernetes 설정 (local 또는 cluster)")
+	rootCmd.PersistentFlags().StringVar(&kubeConfigPath, "kube-config-path", "", "Kubernetes config 파일 경로 (선택)")
 	rootCmd.PersistentFlags().StringVar(&clusterName, "cluster-name", "", "클러스터 이름")
 	rootCmd.PersistentFlags().StringVar(&nodepoolName, "nodepool-name", "devel-nodepool-name", "노드풀 이름")
 }
@@ -42,6 +44,9 @@ func initConfig() {
 	os.Setenv("PROMETHEUS_SCOPE_ORG_ID", prometheusOrgID)
 	os.Setenv("SLACK_WEBHOOK_URL", slackWebhookURL)
 	os.Setenv("KUBE_CONFIG", kubeConfig)
+	if kubeConfigPath != "" {
+		os.Setenv("KUBECONFIG", kubeConfigPath)
+	}
 	os.Setenv("CLUSTER_NAME", clusterName)
 	os.Setenv("NODEPOOL_NAME", nodepoolName)
 }

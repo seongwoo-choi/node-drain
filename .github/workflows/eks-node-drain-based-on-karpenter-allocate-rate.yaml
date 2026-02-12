@@ -110,12 +110,26 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.22'
+        go-version: '1.24'
+
+    - name: Run go vet
+      run: go vet ./...
+
+    - name: Run tests
+      run: go test ./...
+
+    - name: Run race tests
+      run: go test -race ./pkg/node ./pkg/pod
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: v1.61
+        args: --timeout=5m
 
     - name: Run
       id: Run
       run: |
-        go mod tidy
         go run main.go ${{ inputs.COMMAND }} \
           --prometheus-address ${{ inputs.PROMETHEUS_ADDRESS }} \
           --prometheus-org-id ${{ inputs.PROMETHEUS_ORG_ID }} \

@@ -1,8 +1,8 @@
 package config
 
 import (
-	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"k8s.io/client-go/kubernetes"
@@ -11,40 +11,47 @@ import (
 	"k8s.io/client-go/util/homedir"
 )
 
-func GetKubeClientSet(kubeConfigFile string) (kubernetes.Interface, error) {
+// GetKubeClientSet returns a Kubernetes clientset by configuration mode.
+func GetKubeClientSet(kubeConfigMode string, kubeConfigPath string) (kubernetes.Interface, error) {
 	switch {
-	case kubeConfigFile == "github_action", kubeConfigFile == "local":
-		var kubeConfig *string
-		// github_action 에서 실행 시 config 를 가져올 때 사용
-		// kubeConfig 경로를 지정하지 않으면 $HOME/.kube/config 로 지정
-		if home := homedir.HomeDir(); home != "" {
-			kubeConfig = flag.String("kubeConfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeConfig file")
-		} else {
-			kubeConfig = flag.String("kubeConfig", "", "absolute path to the kubeConfig file")
-		}
-		flag.Parse()
-		config, configErr := clientCmd.BuildConfigFromFlags("", *kubeConfig)
-		if configErr != nil {
-			return nil, configErr
+	case kubeConfigMode == "github_action", kubeConfigMode == "local":
+		configPath := resolveKubeConfigPath(kubeConfigPath)
+		config, err := clientCmd.BuildConfigFromFlags("", configPath)
+		if err != nil {
+			return nil, err
 		}
 		return getClientSet(config)
-	case kubeConfigFile == "cluster":
-		//클러스터 내부에서 config 를 가져올 때 사용
+	case kubeConfigMode == "cluster":
+		// 클러스터 내부에서 config 를 가져올 때 사용
 		config, err := rest.InClusterConfig()
 		if err != nil {
 			return nil, err
 		}
 		return getClientSet(config)
 	default:
-		return nil, fmt.Errorf("couldn't parse bencoded string")
+		return nil, fmt.Errorf("invalid kube config mode: %s", kubeConfigMode)
 	}
 }
 
+func resolveKubeConfigPath(path string) string {
+	if path != "" {
+		return path
+	}
+
+	if envPath := os.Getenv("KUBECONFIG"); envPath != "" {
+		return envPath
+	}
+
+	if home := homedir.HomeDir(); home != "" {
+		return filepath.Join(home, ".kube", "config")
+	}
+	return ""
+}
+
 func getClientSet(config *rest.Config) (kubernetes.Interface, error) {
-	// create the clientSet
-	clientSet, clientSdtErr := kubernetes.NewForConfig(config)
-	if clientSdtErr != nil {
-		return nil, clientSdtErr
+	clientSet, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, err
 	}
 
 	return clientSet, nil

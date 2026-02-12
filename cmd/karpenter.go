@@ -3,12 +3,12 @@ package cmd
 import (
 	"app/config"
 	"app/pkg/karpenter"
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
-	"k8s.io/client-go/kubernetes"
 )
 
 var (
@@ -20,31 +20,42 @@ var (
 	allocateRateCmd = &cobra.Command{
 		Use:   "allocate-rate",
 		Short: "Allocate Rate 사용량 조회",
-		Run: func(cmd *cobra.Command, args []string) {
-			kubeConfig := os.Getenv("KUBE_CONFIG")
-			clientSet, err := config.GetKubeClientSet(kubeConfig)
-			if err != nil {
-				slog.Error("쿠버네티스 클라이언트를 가져오는 중 오류가 발생했습니다.", "error", err)
-				return
+		Run: func(command *cobra.Command, args []string) {
+			ctx := command.Context()
+			if ctx == nil {
+				ctx = context.Background()
 			}
-			handleKarpenterAllocateRate(clientSet)
+
+			handleKarpenterAllocateRate(ctx)
 		},
 	}
 )
 
-func handleKarpenterAllocateRate(clientSet kubernetes.Interface) {
+func handleKarpenterAllocateRate(ctx context.Context) {
 	slog.Info("Karpenter Allocate Rate 사용량 조회 커맨드를 실행합니다.")
-	memoryAllocateRate, err := karpenter.GetAllocateRate(clientSet, "memory")
+
+	prometheusClient, err := config.CreatePrometheusClient()
 	if err != nil {
-		slog.Error("Karpenter Memory Allocate Rate 사용량 조회 중 오류가 발생했습니다.", "error", err)
+		slog.Error("Prometheus 클라이언트 생성 실패", "error", err)
 		return
 	}
 
-	cpuAllocateRate, err := karpenter.GetAllocateRate(clientSet, "cpu")
+	nodepool := os.Getenv("NODEPOOL_NAME")
+	metricsQuerier := karpenter.NewPrometheusQuerier(prometheusClient)
+	karpenterClient := karpenter.NewClient(nodepool, metricsQuerier)
+
+	memoryAllocateRate, err := karpenterClient.GetAllocateRate(ctx, "memory")
 	if err != nil {
-		slog.Error("Karpenter Cpu Allocate Rate 사용량 조회 중 오류가 발생했습니다.", "error", err)
+		slog.Error("Karpenter memory allocate rate 조회 실패", "error", err)
 		return
 	}
+
+	cpuAllocateRate, err := karpenterClient.GetAllocateRate(ctx, "cpu")
+	if err != nil {
+		slog.Error("Karpenter cpu allocate rate 조회 실패", "error", err)
+		return
+	}
+
 	slog.Info("Karpenter", "memoryAllocateRate", fmt.Sprintf("%d %%", memoryAllocateRate))
 	slog.Info("Karpenter", "cpuAllocateRate", fmt.Sprintf("%d %%", cpuAllocateRate))
 }

@@ -31,7 +31,7 @@ func TestCordonNode(t *testing.T) {
 	}
 
 	// 테스트 실행
-	err = CordonNode(client, "test-node")
+	err = CordonNode(context.Background(), client, "test-node")
 	if err != nil {
 		t.Errorf("노드 Cordon 을 실패했습니다.: %v", err)
 	}

@@ -1,7 +1,6 @@
 package node
 
 import (
-	"app/pkg/karpenter"
 	"app/pkg/notification"
 	"app/pkg/pod"
 	"app/types"
@@ -20,51 +19,70 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-func NodeDrain(clientSet kubernetes.Interface) ([]types.NodeDrainResult, error) {
-	results, _, err := NodeDrainWithSummary(clientSet)
-	return results, err
+type allocateRateProvider interface {
+	GetAllocateRate(ctx context.Context, resourceType string) (int, error)
 }
 
-func NodeDrainWithSummary(clientSet kubernetes.Interface) ([]types.NodeDrainResult, types.NodeDrainSummary, error) {
-	nodepoolName := os.Getenv("NODEPOOL_NAME")
-	summary := types.NodeDrainSummary{
-		TargetNodepool: nodepoolName,
+// DrainDependencies defines external dependencies for node drain.
+type DrainDependencies struct {
+	AllocateRateProvider allocateRateProvider
+	Notifier             notification.Notifier
+}
+
+// DrainConfig defines node drain behavior.
+type DrainConfig struct {
+	NodepoolName string
+	Eviction     *pod.EvictionConfig
+}
+
+// DefaultDrainConfig returns default drain settings.
+func DefaultDrainConfig(nodepoolName string) DrainConfig {
+	return DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     pod.DefaultEvictionConfig(),
+	}
+}
+
+// NodeDrain cordons and drains selected nodes from a nodepool.
+func NodeDrain(ctx context.Context, clientSet kubernetes.Interface, deps DrainDependencies, cfg DrainConfig) ([]types.NodeDrainResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cfg.Eviction = normalizeDrainEvictionConfig(cfg.Eviction)
+	if cfg.NodepoolName == "" {
+		return nil, fmt.Errorf("nodepool name is required")
+	}
+	if deps.AllocateRateProvider == nil {
+		return nil, fmt.Errorf("allocate rate provider is required")
 	}
 
-	// 노드 목록을 가져옴
-	nodepoolNode, err := getNodepoolNode(clientSet)
+	nodepoolNodes, err := getNodepoolNodes(ctx, clientSet, cfg.NodepoolName)
 	if err != nil {
-		return nil, summary, err
+		return nil, err
 	}
-	summary.TotalNodesInNodepool = len(nodepoolNode)
 
-	// 생성 시간 기준으로 오름차순 정렬 (오래된 순)
-	sort.Slice(nodepoolNode, func(i, j int) bool {
-		return nodepoolNode[i].CreationTimestamp.Before(&nodepoolNode[j].CreationTimestamp)
+	sort.Slice(nodepoolNodes, func(i, j int) bool {
+		return nodepoolNodes[i].CreationTimestamp.Before(&nodepoolNodes[j].CreationTimestamp)
 	})
 
-	// 드레인 할 노드 대수 가져오기
-	drainNodeCount, err := getDrainNodeCount(clientSet, len(nodepoolNode))
+	drainNodeCount, err := getDrainNodeCount(ctx, deps, len(nodepoolNodes))
 	if err != nil {
-		return nil, summary, err
+		return nil, err
 	}
 	slog.Info("드레인 할 노드 개수", "drainNodeCount", drainNodeCount)
-	summary.PlannedDrainNodeCount = drainNodeCount
 
-	// 노드 드레인 수행
-	nodesToDrain := nodepoolNode[:drainNodeCount]
-	for _, node := range nodesToDrain {
-		if err := CordonNode(clientSet, node.Name); err != nil {
-			return nil, summary, fmt.Errorf("노드 %s를 cordon하는 데 실패했습니다: %w", node.Name, err)
+	nodesToDrain := nodepoolNodes[:drainNodeCount]
+	for _, n := range nodesToDrain {
+		if err = CordonNode(ctx, clientSet, n.Name); err != nil {
+			return nil, fmt.Errorf("노드 %s cordon 실패: %w", n.Name, err)
 		}
 	}
 
-	return handleDrainWithSummary(clientSet, &coreV1.NodeList{Items: nodesToDrain}, drainNodeCount, nodepoolName, summary)
+	return handleDrain(ctx, clientSet, nodesToDrain, deps, cfg)
 }
 
-func getNodepoolNode(clientSet kubernetes.Interface) ([]coreV1.Node, error) {
-	nodepoolName := os.Getenv("NODEPOOL_NAME")
-	nodes, err := clientSet.CoreV1().Nodes().List(context.Background(), metaV1.ListOptions{
+func getNodepoolNodes(ctx context.Context, clientSet kubernetes.Interface, nodepoolName string) ([]coreV1.Node, error) {
+	nodes, err := clientSet.CoreV1().Nodes().List(ctx, metaV1.ListOptions{
 		LabelSelector: fmt.Sprintf("karpenter.sh/nodepool=%s", nodepoolName),
 	})
 	if err != nil {
@@ -73,29 +91,29 @@ func getNodepoolNode(clientSet kubernetes.Interface) ([]coreV1.Node, error) {
 	return nodes.Items, nil
 }
 
-func getDrainNodeCount(clientSet kubernetes.Interface, lenNodes int) (int, error) {
+func getDrainNodeCount(ctx context.Context, deps DrainDependencies, lenNodes int) (int, error) {
 	slog.Info("노드 사용률 조회 중")
 	slog.Info("현재 노드 개수", "lenNodes", lenNodes)
 
-	// 초기 노드 수를 Slack으로 전송
-	if err := notification.SendNodeCount(lenNodes); err != nil {
-		slog.Error("초기 노드 수 알림 전송 실패", "error", err)
-		// 알림 실패는 드레인 작업 진행에 영향을 주지 않도록 에러를 반환하지 않음
+	if deps.Notifier != nil {
+		if err := deps.Notifier.SendNodeCount(ctx, lenNodes); err != nil {
+			slog.Error("초기 노드 수 알림 전송 실패", "error", err)
+		}
 	}
 
-	memoryAllocateRate, err := karpenter.GetAllocateRate(clientSet, "memory")
+	memoryAllocateRate, err := deps.AllocateRateProvider.GetAllocateRate(ctx, "memory")
+	if err != nil {
+		return 0, err
+	}
+	cpuAllocateRate, err := deps.AllocateRateProvider.GetAllocateRate(ctx, "cpu")
 	if err != nil {
 		return 0, err
 	}
 
-	cpuAllocateRate, err := karpenter.GetAllocateRate(clientSet, "cpu")
-	if err != nil {
-		return 0, err
-	}
-
-	if err := notification.SendKarpenterAllocateRate(memoryAllocateRate, cpuAllocateRate); err != nil {
-		slog.Error("Karpenter 사용률 알림 전송 실패", "error", err)
-		// 알림 실패는 드레인 작업 진행에 영향을 주지 않도록 에러를 반환하지 않음
+	if deps.Notifier != nil {
+		if err := deps.Notifier.SendKarpenterAllocateRate(ctx, memoryAllocateRate, cpuAllocateRate); err != nil {
+			slog.Error("Karpenter 사용률 알림 전송 실패", "error", err)
+		}
 	}
 
 	slog.Info("Memory 사용률", "memoryAllocateRate", memoryAllocateRate)
@@ -105,10 +123,8 @@ func getDrainNodeCount(clientSet kubernetes.Interface, lenNodes int) (int, error
 	slog.Info("최대 사용률", "maxAllocateRate", maxAllocateRate)
 
 	opts := GetDrainPolicyOptionsFromEnv()
-
 	blocked, reason, safetyErr := ShouldBlockDrainBySafetyConditions(maxAllocateRate, opts)
 	if safetyErr != nil {
-		// fail-open/fail-closed는 ShouldBlockDrainBySafetyConditions에서 결정
 		slog.Warn("드레인 안전 조건 평가 중 오류", "error", safetyErr, "blocked", blocked, "reason", reason)
 	}
 	if blocked {
@@ -123,123 +139,154 @@ func getDrainNodeCount(clientSet kubernetes.Interface, lenNodes int) (int, error
 	return drainNodeCount, nil
 }
 
-func handleDrain(clientSet kubernetes.Interface, nodes *coreV1.NodeList, drainNodeCount int, nodepoolName string) ([]types.NodeDrainResult, error) {
-	results, _, err := handleDrainWithSummary(clientSet, nodes, drainNodeCount, nodepoolName, types.NodeDrainSummary{TargetNodepool: nodepoolName})
-	return results, err
-}
-
-func handleDrainWithSummary(clientSet kubernetes.Interface, nodes *coreV1.NodeList, drainNodeCount int, nodepoolName string, summary types.NodeDrainSummary) ([]types.NodeDrainResult, types.NodeDrainSummary, error) {
-	var results []types.NodeDrainResult
-	errorCounts := map[string]int{}
-
-	// 점진적 드레인: 안전 조건이 설정된 경우, 노드 1대 처리 후 재평가 가능
+func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []coreV1.Node, deps DrainDependencies, cfg DrainConfig) ([]types.NodeDrainResult, error) {
+	results := make([]types.NodeDrainResult, 0, len(nodes))
 	opts := GetDrainPolicyOptionsFromEnv()
 	progressive := parseEnvBool("DRAIN_PROGRESSIVE", true)
 	shouldSafetyRecheck := progressive && (opts.SafetyMaxAllocateRate > 0 || len(opts.SafetyQueries) > 0)
 
-	// drainNodeCount 만큼만 가장 오래된 노드부터 처리
-	for i := 0; i < drainNodeCount && i < len(nodes.Items); i++ {
-		node := nodes.Items[i] // 이미 정렬된 상태이므로 순서대로 처리
+	for i, n := range nodes {
+		if strings.TrimSpace(n.Labels["karpenter.sh/nodepool"]) != cfg.NodepoolName {
+			continue
+		}
 
-		// nodepool 확인
-		if strings.TrimSpace(node.Labels["karpenter.sh/nodepool"]) == nodepoolName {
-			report, err := drainSingleNodeWithReport(clientSet, node.Name)
-			summary.DrainedNodeCount++
-			summary.TotalPods += report.TotalPods
-			summary.EvictedPods += report.EvictedPods
-			summary.DeletedPods += report.DeletedPods
-			summary.ForceDeletedPods += report.ForceDeletedPods
-			summary.PDBBlockedPods += report.PDBBlockedPods
-			summary.ForcedByFallback += report.ForcedByFallback
-			summary.ProblemPodsForced += report.ProblemPodsForced
-			for k, v := range report.ErrorsByReason {
-				errorCounts[k] += v
+		start := time.Now()
+		result := types.NodeDrainResult{
+			NodeName:     n.Name,
+			InstanceType: n.Labels["beta.kubernetes.io/instance-type"],
+			NodepoolName: cfg.NodepoolName,
+			Age:          n.CreationTimestamp.Format(time.RFC3339),
+			StartedAt:    start.Format(time.RFC3339),
+		}
+
+		if err := drainSingleNode(ctx, clientSet, n.Name, cfg.Eviction); err != nil {
+			result.Success = false
+			result.FailureReason = err.Error()
+			result.DurationSeconds = int64(time.Since(start).Seconds())
+			results = append(results, result)
+			return results, fmt.Errorf("노드 %s 드레인 실패: %w", n.Name, err)
+		}
+
+		result.Success = true
+		result.DurationSeconds = int64(time.Since(start).Seconds())
+		results = append(results, result)
+
+		if shouldSafetyRecheck && i < len(nodes)-1 {
+			memoryAllocateRate, memErr := deps.AllocateRateProvider.GetAllocateRate(ctx, "memory")
+			if memErr != nil {
+				slog.Warn("안전 재평가 중 Memory allocate rate 조회 실패(계속 진행)", "error", memErr)
+			}
+			cpuAllocateRate, cpuErr := deps.AllocateRateProvider.GetAllocateRate(ctx, "cpu")
+			if cpuErr != nil {
+				slog.Warn("안전 재평가 중 CPU allocate rate 조회 실패(계속 진행)", "error", cpuErr)
 			}
 
-			if err != nil {
-				summary.TopErrorReasons = topKeysByCount(errorCounts, 3)
-				return nil, summary, err
+			maxRate := int(math.Max(float64(memoryAllocateRate), float64(cpuAllocateRate)))
+			blocked, reason, safetyErr := ShouldBlockDrainBySafetyConditions(maxRate, opts)
+			if safetyErr != nil {
+				slog.Warn("안전 재평가 중 오류", "error", safetyErr, "blocked", blocked, "reason", reason)
 			}
-
-			results = append(results, types.NodeDrainResult{
-				NodeName:     node.Name,
-				InstanceType: node.Labels["beta.kubernetes.io/instance-type"],
-				NodepoolName: nodepoolName,
-				Age:          node.CreationTimestamp.Format(time.RFC3339),
-			})
-
-			// 점진적 드레인: 노드 1대 처리 후 안전 조건 재평가
-			if shouldSafetyRecheck && i < drainNodeCount-1 {
-				memRate, mErr := karpenter.GetAllocateRate(clientSet, "memory")
-				if mErr != nil {
-					slog.Warn("안전 재평가 중 Memory allocate rate 조회 실패(계속 진행)", "error", mErr)
-				}
-				cpuRate, cErr := karpenter.GetAllocateRate(clientSet, "cpu")
-				if cErr != nil {
-					slog.Warn("안전 재평가 중 CPU allocate rate 조회 실패(계속 진행)", "error", cErr)
-				}
-				maxRate := int(math.Max(float64(memRate), float64(cpuRate)))
-				blocked, reason, safetyErr := ShouldBlockDrainBySafetyConditions(maxRate, opts)
-				if safetyErr != nil {
-					slog.Warn("안전 재평가 중 오류", "error", safetyErr, "blocked", blocked, "reason", reason)
-				}
-				if blocked {
-					slog.Warn("안전 조건에 의해 추가 드레인을 중단합니다.", "reason", reason)
-					summary.StoppedBySafety = true
-					summary.StopSafetyReason = reason
-					break
-				}
+			if blocked {
+				slog.Warn("안전 조건에 의해 추가 드레인을 중단합니다.", "reason", reason)
+				break
 			}
 		}
 	}
 
-	memoryAllocateRate, err := karpenter.GetAllocateRate(clientSet, "memory")
+	memoryAllocateRate, err := deps.AllocateRateProvider.GetAllocateRate(ctx, "memory")
 	if err != nil {
-		summary.TopErrorReasons = topKeysByCount(errorCounts, 3)
-		return nil, summary, err
+		return results, err
 	}
-
-	cpuAllocateRate, err := karpenter.GetAllocateRate(clientSet, "cpu")
+	cpuAllocateRate, err := deps.AllocateRateProvider.GetAllocateRate(ctx, "cpu")
 	if err != nil {
-		summary.TopErrorReasons = topKeysByCount(errorCounts, 3)
-		return nil, summary, err
+		return results, err
 	}
 
 	slog.Info("Memory 사용률", "memoryAllocateRate", memoryAllocateRate)
 	slog.Info("Cpu 사용률", "cpuAllocateRate", cpuAllocateRate)
 
-	if err := notification.SendKarpenterAllocateRate(memoryAllocateRate, cpuAllocateRate); err != nil {
-		slog.Error("Karpenter 사용률 알림 전송 실패", "error", err)
-		// 알림 실패는 드레인 작업 진행에 영향을 주지 않도록 에러를 반환하지 않음
+	if deps.Notifier != nil {
+		if err := deps.Notifier.SendKarpenterAllocateRate(ctx, memoryAllocateRate, cpuAllocateRate); err != nil {
+			slog.Error("Karpenter 사용률 알림 전송 실패", "error", err)
+		}
 	}
 
-	summary.TopErrorReasons = topKeysByCount(errorCounts, 3)
-	return results, summary, nil
+	return results, nil
 }
 
-func drainSingleNode(clientSet kubernetes.Interface, nodeName string) error {
-	_, err := drainSingleNodeWithReport(clientSet, nodeName)
-	if err != nil {
-		return fmt.Errorf("노드 %s 에서 파드를 제거하는 중 오류가 발생했습니다.: %w", nodeName, err)
+func drainSingleNode(ctx context.Context, clientSet kubernetes.Interface, nodeName string, cfg *pod.EvictionConfig) error {
+	cfg = normalizeDrainEvictionConfig(cfg)
+
+	if err := pod.EvictPods(ctx, clientSet, nodeName, cfg); err != nil {
+		return fmt.Errorf("노드 %s 파드 제거 실패: %w", nodeName, err)
 	}
+
+	if err := waitForPodsToTerminate(ctx, clientSet, nodeName, cfg); err != nil {
+		return fmt.Errorf("노드 %s 파드 종료 대기 실패: %w", nodeName, err)
+	}
+
+	if cfg.PostEvictionNodeDelay > 0 {
+		timer := time.NewTimer(cfg.PostEvictionNodeDelay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+
 	return nil
 }
 
-func drainSingleNodeWithReport(clientSet kubernetes.Interface, nodeName string) (pod.EvictionReport, error) {
-	config := pod.GetEvictionConfigFromEnv()
+func waitForPodsToTerminate(ctx context.Context, clientSet kubernetes.Interface, nodeName string, cfg *pod.EvictionConfig) error {
+	slog.Info("노드에서 데몬셋 제외 파드 종료 대기 시작", "nodeName", nodeName)
+	cfg = normalizeDrainEvictionConfig(cfg)
 
-	report, err := pod.EvictPodsWithReport(clientSet, nodeName, config)
-	if err != nil {
-		return report, fmt.Errorf("노드 %s 에서 파드를 제거하는 중 오류가 발생했습니다.: %w", nodeName, err)
+	waitCtx := ctx
+	if cfg.NodeTerminationTimeout > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, cfg.NodeTerminationTimeout)
+		defer cancel()
 	}
 
-	if err := waitForPodsToTerminate(clientSet, nodeName); err != nil {
-		return report, fmt.Errorf("노드 %s 에서 파드가 종료되는 중 오류가 발생했습니다.: %w", nodeName, err)
+	ticker := time.NewTicker(cfg.NodeTerminationCheckTick)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("노드 %s 파드 종료 대기 타임아웃: %w", nodeName, waitCtx.Err())
+		case <-ticker.C:
+			pods, err := pod.GetNonCriticalPods(waitCtx, clientSet, nodeName)
+			if err != nil {
+				return fmt.Errorf("노드 %s 파드 조회 실패: %w", nodeName, err)
+			}
+			if len(pods) == 0 {
+				slog.Info("데몬셋 제외 모든 Pod 종료 완료", "nodeName", nodeName)
+				return nil
+			}
+			slog.Info("Pod 종료 대기 중", "nodeName", nodeName, "remainingPods", len(pods))
+		}
+	}
+}
+
+func normalizeDrainEvictionConfig(cfg *pod.EvictionConfig) *pod.EvictionConfig {
+	defaults := pod.DefaultEvictionConfig()
+	if cfg == nil {
+		return defaults
 	}
 
-	time.Sleep(50 * time.Second)
-
-	return report, nil
+	normalized := *cfg
+	if normalized.NodeTerminationTimeout <= 0 {
+		normalized.NodeTerminationTimeout = defaults.NodeTerminationTimeout
+	}
+	if normalized.NodeTerminationCheckTick <= 0 {
+		normalized.NodeTerminationCheckTick = defaults.NodeTerminationCheckTick
+	}
+	if normalized.PostEvictionNodeDelay < 0 {
+		normalized.PostEvictionNodeDelay = 0
+	}
+	return &normalized
 }
 
 func parseEnvBool(key string, defaultValue bool) bool {
@@ -252,60 +299,4 @@ func parseEnvBool(key string, defaultValue bool) bool {
 		return defaultValue
 	}
 	return b
-}
-
-func topKeysByCount(m map[string]int, n int) []string {
-	if n <= 0 || len(m) == 0 {
-		return nil
-	}
-	type kv struct {
-		k string
-		v int
-	}
-	items := make([]kv, 0, len(m))
-	for k, v := range m {
-		items = append(items, kv{k: k, v: v})
-	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].v == items[j].v {
-			return items[i].k < items[j].k
-		}
-		return items[i].v > items[j].v
-	})
-	if len(items) > n {
-		items = items[:n]
-	}
-	out := make([]string, 0, len(items))
-	for _, it := range items {
-		out = append(out, it.k)
-	}
-	return out
-}
-
-func waitForPodsToTerminate(clientSet kubernetes.Interface, nodeName string) error {
-	slog.Info("노드에서 데몬셋을 제외한 모든 파드가 종료될 때까지 기다리는 중", "nodeName", nodeName)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Warn("파드 종료 대기 타임아웃", "nodeName", nodeName)
-			return fmt.Errorf("노드 %s 에서 파드 종료 대기 중 타임아웃 발생", nodeName)
-		default:
-			pods, err := pod.GetNonCriticalPods(clientSet, nodeName)
-			if err != nil {
-				return fmt.Errorf("노드 %s 에서 데몬셋을 제외한 파드를 가져오는 중 오류가 발생했습니다.: %v", nodeName, err)
-			}
-
-			if len(pods) == 0 {
-				slog.Info("데몬셋을 제외한 모든 Pod가 종료됨", "nodeName", nodeName)
-				return nil
-			}
-
-			slog.Info("Pod 종료 대기 중", "nodeName", nodeName, "remainingPods", len(pods))
-			time.Sleep(15 * time.Second)
-		}
-	}
 }

@@ -8,8 +8,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-func CordonNode(clientSet kubernetes.Interface, nodeName string) error {
-	node, err := clientSet.CoreV1().Nodes().Get(context.Background(), nodeName, metaV1.GetOptions{})
+// CordonNode marks a node unschedulable.
+func CordonNode(ctx context.Context, clientSet kubernetes.Interface, nodeName string) error {
+	node, err := clientSet.CoreV1().Nodes().Get(ctx, nodeName, metaV1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -20,7 +21,7 @@ func CordonNode(clientSet kubernetes.Interface, nodeName string) error {
 	}
 
 	node.Spec.Unschedulable = true
-	if _, err = clientSet.CoreV1().Nodes().Update(context.Background(), node, metaV1.UpdateOptions{}); err != nil {
+	if _, err = clientSet.CoreV1().Nodes().Update(ctx, node, metaV1.UpdateOptions{}); err != nil {
 		return err
 	}
 	slog.Info("노드 Cordon 완료", "nodeName", nodeName)

@@ -1,15 +1,15 @@
 package types
 
-type NodeInfo struct {
-	NodeName  string  `json:"node_name"`
-	NodeUsage float64 `json:"usage"`
-}
-
+// NodeDrainResult represents the execution result for a single node drain operation.
 type NodeDrainResult struct {
-	NodeName     string `json:"node_name"`
-	InstanceType string `json:"instance_type"`
-	NodepoolName string `json:"nodepool_name"`
-	Age          string `json:"age"`
+	NodeName        string `json:"node_name"`
+	InstanceType    string `json:"instance_type"`
+	NodepoolName    string `json:"nodepool_name"`
+	Age             string `json:"age"`
+	StartedAt       string `json:"started_at"`
+	DurationSeconds int64  `json:"duration_seconds"`
+	Success         bool   `json:"success"`
+	FailureReason   string `json:"failure_reason,omitempty"`
 }
 
 type NodeDrainSummary struct {
