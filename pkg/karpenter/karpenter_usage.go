@@ -2,6 +2,7 @@ package karpenter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -12,6 +13,11 @@ import (
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	prometheusModel "github.com/prometheus/common/model"
 )
+
+var nodepoolUsageMetricNames = []string{
+	"karpenter_nodepools_usage",
+	"karpenter_nodepool_usage",
+}
 
 // MetricsQuerier is a minimal contract for querying metrics backends.
 type MetricsQuerier interface {
@@ -93,18 +99,31 @@ func (c *Client) GetKarpenterPodRequest(ctx context.Context, resourceType string
 
 // GetKarpenterNodepoolUsage returns nodepool usage for a resource type.
 func (c *Client) GetKarpenterNodepoolUsage(ctx context.Context, resourceType string) (float64, error) {
-	query := fmt.Sprintf(
-		"karpenter_nodepool_usage{nodepool='%s', resource_type='%s'}",
-		c.nodepoolName,
-		resourceType,
-	)
-	slog.Info("query", "query", query)
+	var emptyErr error
+	for _, metricName := range nodepoolUsageMetricNames {
+		query := fmt.Sprintf(
+			"%s{nodepool='%s', resource_type='%s'}",
+			metricName,
+			c.nodepoolName,
+			resourceType,
+		)
+		slog.Info("query", "query", query)
 
-	result, err := c.querier.Query(ctx, query)
-	if err != nil {
-		return 0, fmt.Errorf("query nodepool usage: %w", err)
+		result, err := c.querier.Query(ctx, query)
+		if err != nil {
+			return 0, fmt.Errorf("query nodepool usage: %w", err)
+		}
+		if len(result) == 0 {
+			emptyErr = fmt.Errorf("empty prometheus result for metric %s resource type %s", metricName, resourceType)
+			continue
+		}
+		return parseUsageResult(result, resourceType)
 	}
-	return parseUsageResult(result, resourceType)
+
+	if emptyErr == nil {
+		emptyErr = errors.New("empty prometheus result for nodepool usage")
+	}
+	return 0, emptyErr
 }
 
 // GetAllocateRate returns pod-request to nodepool-usage ratio in percent.

@@ -12,6 +12,7 @@ type fakeMetricsQuerier struct {
 	usageByResource    map[string]float64
 	requestByResource  map[string]float64
 	returnEmptyOnUsage bool
+	emptyUsageMetrics  map[string]bool
 }
 
 func (f fakeMetricsQuerier) Query(ctx context.Context, query string) (prometheusModel.Vector, error) {
@@ -23,8 +24,11 @@ func (f fakeMetricsQuerier) Query(ctx context.Context, query string) (prometheus
 		resourceType = "cpu"
 	}
 
-	if strings.Contains(query, "karpenter_nodepool_usage") {
-		if f.returnEmptyOnUsage {
+	for _, metricName := range nodepoolUsageMetricNames {
+		if !strings.Contains(query, metricName) {
+			continue
+		}
+		if f.returnEmptyOnUsage || f.emptyUsageMetrics[metricName] {
 			return prometheusModel.Vector{}, nil
 		}
 		return vectorOf(f.usageByResource[resourceType]), nil
@@ -40,6 +44,24 @@ func vectorOf(value float64) prometheusModel.Vector {
 		&prometheusModel.Sample{
 			Value: prometheusModel.SampleValue(value),
 		},
+	}
+}
+
+func TestGetKarpenterNodepoolUsageFallsBackToLegacyMetric(t *testing.T) {
+	querier := fakeMetricsQuerier{
+		usageByResource: map[string]float64{"memory": 200 * 1000 * 1000 * 1000},
+		emptyUsageMetrics: map[string]bool{
+			"karpenter_nodepools_usage": true,
+		},
+	}
+
+	client := NewClient("nodepool-a", querier)
+	got, err := client.GetKarpenterNodepoolUsage(context.Background(), "memory")
+	if err != nil {
+		t.Fatalf("GetKarpenterNodepoolUsage() error = %v", err)
+	}
+	if got != 200 {
+		t.Fatalf("GetKarpenterNodepoolUsage() = %.0f, want=200", got)
 	}
 }
 

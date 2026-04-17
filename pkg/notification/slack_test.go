@@ -54,6 +54,21 @@ func TestSendNodeDrainComplete(t *testing.T) {
 	}
 }
 
+func TestSlackNoWebhookIsNoop(t *testing.T) {
+	notifier := NewSlackNotifier(SlackConfig{
+		WebhookURL:   "",
+		ClusterName:  "test-cluster",
+		NodepoolName: "test-pool",
+	})
+
+	if err := notifier.SendNodeCount(context.Background(), 3); err != nil {
+		t.Fatalf("SendNodeCount should no-op without webhook: %v", err)
+	}
+	if err := notifier.SendNodeDrainError(context.Background(), context.Canceled); err != nil {
+		t.Fatalf("SendNodeDrainError should no-op without webhook: %v", err)
+	}
+}
+
 func TestSlackRetryOn5xx(t *testing.T) {
 	attempts := 0
 	notifier := NewSlackNotifier(SlackConfig{

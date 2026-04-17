@@ -92,7 +92,7 @@ func NewEnvSlackNotifier() *SlackNotifier {
 // SendNodeDrainComplete sends completion summary.
 func (s *SlackNotifier) SendNodeDrainComplete(ctx context.Context, results []types.NodeDrainResult) error {
 	if s.webhookURL == "" {
-		return fmt.Errorf("SLACK_WEBHOOK_URL is not set")
+		return nil
 	}
 	return s.sendSlackMessage(ctx, s.formatNodeDrainMessage(results))
 }
@@ -100,7 +100,7 @@ func (s *SlackNotifier) SendNodeDrainComplete(ctx context.Context, results []typ
 // SendNodeDrainCompleteWithSummary sends completion summary with aggregate metrics.
 func (s *SlackNotifier) SendNodeDrainCompleteWithSummary(ctx context.Context, results []types.NodeDrainResult, summary types.NodeDrainSummary) error {
 	if s.webhookURL == "" {
-		return fmt.Errorf("SLACK_WEBHOOK_URL is not set")
+		return nil
 	}
 	message := s.formatNodeDrainMessage(results)
 	message += formatNodeDrainSummaryBlock(summary)
@@ -110,7 +110,7 @@ func (s *SlackNotifier) SendNodeDrainCompleteWithSummary(ctx context.Context, re
 // SendNodeDrainError sends error summary.
 func (s *SlackNotifier) SendNodeDrainError(ctx context.Context, err error) error {
 	if s.webhookURL == "" {
-		return fmt.Errorf("SLACK_WEBHOOK_URL is not set")
+		return nil
 	}
 	return s.sendSlackMessage(ctx, err.Error())
 }
@@ -118,7 +118,7 @@ func (s *SlackNotifier) SendNodeDrainError(ctx context.Context, err error) error
 // SendNodeDrainErrorWithSummary sends error summary with aggregate metrics.
 func (s *SlackNotifier) SendNodeDrainErrorWithSummary(ctx context.Context, err error, summary types.NodeDrainSummary) error {
 	if s.webhookURL == "" {
-		return fmt.Errorf("SLACK_WEBHOOK_URL is not set")
+		return nil
 	}
 	message := fmt.Sprintf("❌ 노드 드레인 작업 실패: %s\n\n", err.Error())
 	message += formatNodeDrainSummaryBlock(summary)
@@ -128,7 +128,7 @@ func (s *SlackNotifier) SendNodeDrainErrorWithSummary(ctx context.Context, err e
 // SendNodeCount sends node count message.
 func (s *SlackNotifier) SendNodeCount(ctx context.Context, nodeCount int) error {
 	if s.webhookURL == "" {
-		return fmt.Errorf("SLACK_WEBHOOK_URL is not set")
+		return nil
 	}
 
 	message := fmt.Sprintf("ℹ️ %s 의 현재 Nodepool(%s) 노드 개수: %d개", s.clusterName, s.nodepoolName, nodeCount)
@@ -138,7 +138,7 @@ func (s *SlackNotifier) SendNodeCount(ctx context.Context, nodeCount int) error 
 // SendKarpenterAllocateRate sends allocation-rate message.
 func (s *SlackNotifier) SendKarpenterAllocateRate(ctx context.Context, memoryAllocateRate int, cpuAllocateRate int) error {
 	if s.webhookURL == "" {
-		return fmt.Errorf("SLACK_WEBHOOK_URL is not set")
+		return nil
 	}
 
 	message := fmt.Sprintf("🔄 %s Nodepool(%s) 의 현재 Karpenter Allocate Rate\n\n", s.clusterName, s.nodepoolName)
