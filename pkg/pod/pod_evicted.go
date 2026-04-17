@@ -454,8 +454,8 @@ func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod
 	ticker := time.NewTicker(cfg.CheckInterval)
 	defer ticker.Stop()
 
-	_, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
-	if apierrors.IsNotFound(err) {
+	deleted, err := podDeletionObserved(ctx, clientSet, pod)
+	if deleted {
 		slog.Info("파드가 이미 제거됨", "pod", pod.Name)
 		return nil
 	}
@@ -468,8 +468,8 @@ func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-timeoutTimer.C:
-			_, err = clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
-			if apierrors.IsNotFound(err) {
+			deleted, err = podDeletionObserved(ctx, clientSet, pod)
+			if deleted {
 				return nil
 			}
 			if err != nil && isRateLimitError(err) {
@@ -478,8 +478,8 @@ func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod
 			}
 			return fmt.Errorf("파드 삭제 타임아웃: %s", pod.Name)
 		case <-ticker.C:
-			_, err = clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
-			if apierrors.IsNotFound(err) {
+			deleted, err = podDeletionObserved(ctx, clientSet, pod)
+			if deleted {
 				slog.Info("파드 eviction 완료", "pod", pod.Name)
 				return nil
 			}
@@ -488,6 +488,21 @@ func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod
 			}
 		}
 	}
+}
+
+func podDeletionObserved(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod) (bool, error) {
+	currentPod, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if pod.UID != "" && currentPod.UID != pod.UID {
+		slog.Info("파드가 새 UID로 재생성됨", "pod", pod.Name, "oldUID", pod.UID, "newUID", currentPod.UID)
+		return true, nil
+	}
+	return false, nil
 }
 
 func isBatchJob(pod coreV1.Pod) bool {

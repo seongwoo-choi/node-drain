@@ -12,6 +12,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -273,6 +274,19 @@ func TestWaitForPodDeletion(t *testing.T) {
 			expectedError: false,
 		},
 		{
+			name: "StatefulSet 파드가 같은 이름의 새 UID로 재생성됨",
+			pod: coreV1.Pod{
+				ObjectMeta: metaV1.ObjectMeta{
+					Name:      "stateful-pod-0",
+					Namespace: "default",
+					UID:       types.UID("old-uid"),
+				},
+			},
+			config:        DefaultEvictionConfig(),
+			deletePod:     false,
+			expectedError: false,
+		},
+		{
 			name: "Batch Job 파드 타임아웃 시간 증가",
 			pod: coreV1.Pod{
 				ObjectMeta: metaV1.ObjectMeta{
@@ -317,7 +331,11 @@ func TestWaitForPodDeletion(t *testing.T) {
 
 			if tt.name != "파드가 이미 존재하지 않음" {
 				// 테스트용 파드 추가
-				_, err := client.CoreV1().Pods(tt.pod.Namespace).Create(context.Background(), &tt.pod, metaV1.CreateOptions{})
+				podToCreate := tt.pod
+				if tt.name == "StatefulSet 파드가 같은 이름의 새 UID로 재생성됨" {
+					podToCreate.UID = types.UID("new-uid")
+				}
+				_, err := client.CoreV1().Pods(podToCreate.Namespace).Create(context.Background(), &podToCreate, metaV1.CreateOptions{})
 				if err != nil {
 					t.Fatalf("파드 생성 실패: %v", err)
 				}
