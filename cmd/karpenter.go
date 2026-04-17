@@ -20,24 +20,24 @@ var (
 	allocateRateCmd = &cobra.Command{
 		Use:   "allocate-rate",
 		Short: "Allocate Rate 사용량 조회",
-		Run: func(command *cobra.Command, args []string) {
+		RunE: func(command *cobra.Command, args []string) error {
 			ctx := command.Context()
 			if ctx == nil {
 				ctx = context.Background()
 			}
 
-			handleKarpenterAllocateRate(ctx)
+			return handleKarpenterAllocateRate(ctx)
 		},
 	}
 )
 
-func handleKarpenterAllocateRate(ctx context.Context) {
+func handleKarpenterAllocateRate(ctx context.Context) error {
 	slog.Info("Karpenter Allocate Rate 사용량 조회 커맨드를 실행합니다.")
 
 	prometheusClient, err := config.CreatePrometheusClient()
 	if err != nil {
 		slog.Error("Prometheus 클라이언트 생성 실패", "error", err)
-		return
+		return fmt.Errorf("Prometheus 클라이언트 생성 실패: %w", err)
 	}
 
 	nodepool := os.Getenv("NODEPOOL_NAME")
@@ -47,17 +47,18 @@ func handleKarpenterAllocateRate(ctx context.Context) {
 	memoryAllocateRate, err := karpenterClient.GetAllocateRate(ctx, "memory")
 	if err != nil {
 		slog.Error("Karpenter memory allocate rate 조회 실패", "error", err)
-		return
+		return fmt.Errorf("Karpenter memory allocate rate 조회 실패: %w", err)
 	}
 
 	cpuAllocateRate, err := karpenterClient.GetAllocateRate(ctx, "cpu")
 	if err != nil {
 		slog.Error("Karpenter cpu allocate rate 조회 실패", "error", err)
-		return
+		return fmt.Errorf("Karpenter cpu allocate rate 조회 실패: %w", err)
 	}
 
 	slog.Info("Karpenter", "memoryAllocateRate", fmt.Sprintf("%d %%", memoryAllocateRate))
 	slog.Info("Karpenter", "cpuAllocateRate", fmt.Sprintf("%d %%", cpuAllocateRate))
+	return nil
 }
 
 func init() {

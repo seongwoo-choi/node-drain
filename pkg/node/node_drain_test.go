@@ -21,6 +21,25 @@ func (f fakeAllocateRateProvider) GetAllocateRate(ctx context.Context, resourceT
 	return f.rates[resourceType], nil
 }
 
+type sequenceAllocateRateProvider struct {
+	rates map[string][]int
+	calls map[string]int
+}
+
+func (f *sequenceAllocateRateProvider) GetAllocateRate(ctx context.Context, resourceType string) (int, error) {
+	values := f.rates[resourceType]
+	if len(values) == 0 {
+		return 0, nil
+	}
+
+	idx := f.calls[resourceType]
+	f.calls[resourceType] = idx + 1
+	if idx >= len(values) {
+		return values[len(values)-1], nil
+	}
+	return values[idx], nil
+}
+
 type fakeNotifier struct{}
 
 func (f fakeNotifier) SendNodeDrainComplete(ctx context.Context, results []types.NodeDrainResult) error {
@@ -134,6 +153,83 @@ func TestNodeDrainSelectsExpectedNodeCount(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNodeDrainProgressiveDoesNotPreCordonRemainingNodes(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "0")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "90")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "true")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	for i := 1; i <= 3; i++ {
+		node := newNode(nodepoolName, i)
+		if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+			t.Fatalf("노드 생성 실패: %v", err)
+		}
+	}
+
+	provider := &sequenceAllocateRateProvider{
+		rates: map[string][]int{
+			"memory": {30, 95, 95},
+			"cpu":    {30, 95, 95},
+		},
+		calls: map[string]int{},
+	}
+
+	results, err := NodeDrain(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: provider,
+		Notifier:             fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     testEvictionConfig(),
+	})
+	if err != nil {
+		t.Fatalf("NodeDrain 실패: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("drain 결과 개수 불일치: got=%d want=1", len(results))
+	}
+	if results[0].NodeName != "node-1" {
+		t.Fatalf("drain 노드 순서 불일치: got=%s want=node-1", results[0].NodeName)
+	}
+
+	assertNodeUnschedulable(t, clientSet, "node-1", true)
+	assertNodeUnschedulable(t, clientSet, "node-2", false)
+	assertNodeUnschedulable(t, clientSet, "node-3", false)
+}
+
+func testEvictionConfig() *pod.EvictionConfig {
+	return &pod.EvictionConfig{
+		MaxConcurrentEvictions:   2,
+		MaxRetries:               1,
+		RetryBackoffDuration:     1 * time.Millisecond,
+		PodDeletionTimeout:       1 * time.Second,
+		CheckInterval:            10 * time.Millisecond,
+		EvictionTimeout:          2 * time.Second,
+		NodeTerminationTimeout:   1 * time.Second,
+		NodeTerminationCheckTick: 10 * time.Millisecond,
+		PostEvictionNodeDelay:    0,
+	}
+}
+
+func assertNodeUnschedulable(t *testing.T, clientSet *fake.Clientset, nodeName string, want bool) {
+	t.Helper()
+
+	node, err := clientSet.CoreV1().Nodes().Get(context.Background(), nodeName, metaV1.GetOptions{})
+	if err != nil {
+		t.Fatalf("노드 조회 실패: %v", err)
+	}
+	if node.Spec.Unschedulable != want {
+		t.Fatalf("node %s unschedulable 불일치: got=%t want=%t", nodeName, node.Spec.Unschedulable, want)
 	}
 }
 

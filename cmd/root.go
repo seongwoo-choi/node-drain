@@ -17,9 +17,11 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "node-manager",
-	Short: "노드 관리 CLI 도구",
-	Long:  `노드의 메모리/디스크 사용량을 모니터링하고 드레인을 수행하는 CLI 도구입니다.`,
+	Use:           "node-manager",
+	Short:         "노드 관리 CLI 도구",
+	Long:          `노드의 메모리/디스크 사용량을 모니터링하고 드레인을 수행하는 CLI 도구입니다.`,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 func Execute() error {

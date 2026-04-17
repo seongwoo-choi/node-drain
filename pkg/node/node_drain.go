@@ -72,12 +72,6 @@ func NodeDrain(ctx context.Context, clientSet kubernetes.Interface, deps DrainDe
 	slog.Info("드레인 할 노드 개수", "drainNodeCount", drainNodeCount)
 
 	nodesToDrain := nodepoolNodes[:drainNodeCount]
-	for _, n := range nodesToDrain {
-		if err = CordonNode(ctx, clientSet, n.Name); err != nil {
-			return nil, fmt.Errorf("노드 %s cordon 실패: %w", n.Name, err)
-		}
-	}
-
 	return handleDrain(ctx, clientSet, nodesToDrain, deps, cfg)
 }
 
@@ -157,6 +151,14 @@ func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []co
 			NodepoolName: cfg.NodepoolName,
 			Age:          n.CreationTimestamp.Format(time.RFC3339),
 			StartedAt:    start.Format(time.RFC3339),
+		}
+
+		if err := CordonNode(ctx, clientSet, n.Name); err != nil {
+			result.Success = false
+			result.FailureReason = err.Error()
+			result.DurationSeconds = int64(time.Since(start).Seconds())
+			results = append(results, result)
+			return results, fmt.Errorf("노드 %s cordon 실패: %w", n.Name, err)
 		}
 
 		if err := drainSingleNode(ctx, clientSet, n.Name, cfg.Eviction); err != nil {

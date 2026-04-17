@@ -401,7 +401,11 @@ INFO 노드에서 데몬셋을 제외한 모든 Pod가 종료됨 nodeName=ip-10-
 
 - Nodes: `get`, `list`, `watch`, `update`
 - Pods: `get`, `list`, `watch`, `delete`
+- Pod eviction subresource: `create` (`--pod-eviction-mode evict` 기본값에서 필요)
 - PodDisruptionBudgets: `get`, `list`, `watch`
+
+> `--pod-eviction-mode delete`만 사용할 경우 `pods/eviction` 권한은 필요하지 않습니다.  
+> 기본값인 `evict` 모드는 PDB를 Kubernetes eviction subresource로 적용하므로 `pods/eviction create` 권한이 필요합니다.
 
 예시(참고용):
 
@@ -417,6 +421,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch"]

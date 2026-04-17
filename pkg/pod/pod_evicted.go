@@ -46,13 +46,17 @@ type EvictionConfig struct {
 
 type pdbCache struct {
 	sync.RWMutex
-	cache map[string][]*policyv1.PodDisruptionBudget
+	cache map[string]pdbCacheEntry
 	ttl   time.Duration
-	last  time.Time
+}
+
+type pdbCacheEntry struct {
+	pdbs []*policyv1.PodDisruptionBudget
+	last time.Time
 }
 
 var globalPDBCache = &pdbCache{
-	cache: make(map[string][]*policyv1.PodDisruptionBudget),
+	cache: make(map[string]pdbCacheEntry),
 	ttl:   30 * time.Second,
 }
 
@@ -286,17 +290,18 @@ func checkPDB(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Po
 func getPDBsWithCache(ctx context.Context, clientSet kubernetes.Interface, namespace string) ([]*policyv1.PodDisruptionBudget, error) {
 	globalPDBCache.RLock()
 	now := time.Now()
-	if pdbs, ok := globalPDBCache.cache[namespace]; ok && now.Sub(globalPDBCache.last) < globalPDBCache.ttl {
+	if entry, ok := globalPDBCache.cache[namespace]; ok && now.Sub(entry.last) < globalPDBCache.ttl {
 		globalPDBCache.RUnlock()
-		return pdbs, nil
+		return entry.pdbs, nil
 	}
 	globalPDBCache.RUnlock()
 
 	globalPDBCache.Lock()
 	defer globalPDBCache.Unlock()
 
-	if pdbs, ok := globalPDBCache.cache[namespace]; ok && now.Sub(globalPDBCache.last) < globalPDBCache.ttl {
-		return pdbs, nil
+	now = time.Now()
+	if entry, ok := globalPDBCache.cache[namespace]; ok && now.Sub(entry.last) < globalPDBCache.ttl {
+		return entry.pdbs, nil
 	}
 
 	pdbList, err := clientSet.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metaV1.ListOptions{})
@@ -309,8 +314,10 @@ func getPDBsWithCache(ctx context.Context, clientSet kubernetes.Interface, names
 		pdbs = append(pdbs, &pdbList.Items[i])
 	}
 
-	globalPDBCache.cache[namespace] = pdbs
-	globalPDBCache.last = time.Now()
+	globalPDBCache.cache[namespace] = pdbCacheEntry{
+		pdbs: pdbs,
+		last: time.Now(),
+	}
 
 	return pdbs, nil
 }

@@ -90,10 +90,7 @@ func TestPodWithPDBEviction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			globalPDBCache.Lock()
-			globalPDBCache.cache = make(map[string][]*policyv1.PodDisruptionBudget)
-			globalPDBCache.last = time.Time{}
-			globalPDBCache.Unlock()
+			resetPDBCacheForTest()
 
 			pod := coreV1.Pod{
 				ObjectMeta: metaV1.ObjectMeta{
@@ -141,6 +138,37 @@ func TestPodWithPDBEviction(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPDBCacheTTLIsNamespaceScoped(t *testing.T) {
+	resetPDBCacheForTest()
+
+	oldTime := time.Now().Add(-globalPDBCache.ttl - time.Second)
+	globalPDBCache.Lock()
+	globalPDBCache.cache["namespace-a"] = pdbCacheEntry{
+		pdbs: []*policyv1.PodDisruptionBudget{newTestPDB("namespace-a", "old-a")},
+		last: oldTime,
+	}
+	globalPDBCache.cache["namespace-b"] = pdbCacheEntry{
+		pdbs: []*policyv1.PodDisruptionBudget{newTestPDB("namespace-b", "old-b")},
+		last: oldTime,
+	}
+	globalPDBCache.Unlock()
+
+	client := fake.NewSimpleClientset(
+		newTestPDB("namespace-a", "fresh-a"),
+		newTestPDB("namespace-b", "fresh-b"),
+	)
+
+	pdbs, err := getPDBsWithCache(context.Background(), client, "namespace-a")
+	assert.NoError(t, err)
+	assert.Len(t, pdbs, 1)
+	assert.Equal(t, "fresh-a", pdbs[0].Name)
+
+	pdbs, err = getPDBsWithCache(context.Background(), client, "namespace-b")
+	assert.NoError(t, err)
+	assert.Len(t, pdbs, 1)
+	assert.Equal(t, "fresh-b", pdbs[0].Name)
 }
 
 func TestEvictPod(t *testing.T) {
@@ -633,4 +661,28 @@ func TestEvictPodReturnsErrorOnGetFailure(t *testing.T) {
 	err := evictPod(context.Background(), client, pod, DefaultEvictionConfig())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "파드 상태 조회 실패")
+}
+
+func resetPDBCacheForTest() {
+	globalPDBCache.Lock()
+	defer globalPDBCache.Unlock()
+	globalPDBCache.cache = make(map[string]pdbCacheEntry)
+}
+
+func newTestPDB(namespace, name string) *policyv1.PodDisruptionBudget {
+	return &policyv1.PodDisruptionBudget{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MinAvailable: &intstr.IntOrString{Type: intstr.Int, IntVal: 1},
+			Selector: &metaV1.LabelSelector{
+				MatchLabels: map[string]string{"app": "test"},
+			},
+		},
+		Status: policyv1.PodDisruptionBudgetStatus{
+			DisruptionsAllowed: 1,
+		},
+	}
 }

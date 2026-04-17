@@ -7,6 +7,7 @@ import (
 	"app/pkg/notification"
 	"app/pkg/pod"
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -42,7 +43,7 @@ var (
 var drainCmd = &cobra.Command{
 	Use:   "drain",
 	Short: "노드 드레인 실행",
-	Run: func(command *cobra.Command, args []string) {
+	RunE: func(command *cobra.Command, args []string) error {
 		// drain 정책 플래그 -> env 주입
 		_ = os.Setenv("DRAIN_POLICY", drainPolicy)
 		_ = os.Setenv("DRAIN_ROUNDING", drainRounding)
@@ -78,20 +79,20 @@ var drainCmd = &cobra.Command{
 		clientSet, err := config.GetKubeClientSet(kubeConfigMode, kubeConfigPath)
 		if err != nil {
 			slog.Error("쿠버네티스 클라이언트 생성 실패", "error", err)
-			return
+			return fmt.Errorf("쿠버네티스 클라이언트 생성 실패: %w", err)
 		}
 
-		handleNodeDrain(ctx, clientSet)
+		return handleNodeDrain(ctx, clientSet)
 	},
 }
 
-func handleNodeDrain(ctx context.Context, clientSet kubernetes.Interface) {
+func handleNodeDrain(ctx context.Context, clientSet kubernetes.Interface) error {
 	slog.Info("노드 드레인 커맨드를 실행합니다.")
 
 	prometheusClient, err := config.CreatePrometheusClient()
 	if err != nil {
 		slog.Error("Prometheus 클라이언트 생성 실패", "error", err)
-		return
+		return fmt.Errorf("Prometheus 클라이언트 생성 실패: %w", err)
 	}
 
 	nodepool := os.Getenv("NODEPOOL_NAME")
@@ -115,12 +116,13 @@ func handleNodeDrain(ctx context.Context, clientSet kubernetes.Interface) {
 		if notifyErr := notifier.SendNodeDrainError(ctx, err); notifyErr != nil {
 			slog.Error("슬랙 알림 전송 실패", "error", notifyErr)
 		}
-		return
+		return err
 	}
 
 	if err = notifier.SendNodeDrainComplete(ctx, results); err != nil {
 		slog.Error("슬랙 알림 전송 실패", "error", err)
 	}
+	return nil
 }
 
 func init() {
