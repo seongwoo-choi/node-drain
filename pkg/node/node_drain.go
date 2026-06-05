@@ -16,8 +16,11 @@ import (
 
 	coreV1 "k8s.io/api/core/v1"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 )
+
+const karpenterNodepoolLabel = "karpenter.sh/nodepool"
 
 type allocateRateProvider interface {
 	GetAllocateRate(ctx context.Context, resourceType string) (int, error)
@@ -113,13 +116,28 @@ func NodeDrainWithReport(ctx context.Context, clientSet kubernetes.Interface, de
 }
 
 func getNodepoolNodes(ctx context.Context, clientSet kubernetes.Interface, nodepoolName string) ([]coreV1.Node, error) {
+	selector, err := nodepoolLabelSelector(nodepoolName)
+	if err != nil {
+		return nil, err
+	}
+
 	nodes, err := clientSet.CoreV1().Nodes().List(ctx, metaV1.ListOptions{
-		LabelSelector: fmt.Sprintf("karpenter.sh/nodepool=%s", nodepoolName),
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return nodes.Items, nil
+}
+
+func nodepoolLabelSelector(nodepoolName string) (string, error) {
+	selector, err := labels.ValidatedSelectorFromSet(labels.Set{
+		karpenterNodepoolLabel: nodepoolName,
+	})
+	if err != nil {
+		return "", fmt.Errorf("invalid nodepool label selector: %w", err)
+	}
+	return selector.String(), nil
 }
 
 func getDrainNodeCount(ctx context.Context, deps DrainDependencies, lenNodes int) (int, error) {
@@ -187,7 +205,7 @@ func selectNodesToDrain(ctx context.Context, clientSet kubernetes.Interface, nod
 
 	candidates := make([]coreV1.Node, 0, len(nodes))
 	for _, n := range nodes {
-		if strings.TrimSpace(n.Labels["karpenter.sh/nodepool"]) != cfg.NodepoolName {
+		if strings.TrimSpace(n.Labels[karpenterNodepoolLabel]) != cfg.NodepoolName {
 			continue
 		}
 		if cfg.SkipUnschedulable && n.Spec.Unschedulable {
@@ -296,7 +314,7 @@ func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []co
 	shouldSafetyRecheck := progressive && (opts.SafetyMaxAllocateRate > 0 || len(opts.SafetyQueries) > 0)
 
 	for i, n := range nodes {
-		if strings.TrimSpace(n.Labels["karpenter.sh/nodepool"]) != cfg.NodepoolName {
+		if strings.TrimSpace(n.Labels[karpenterNodepoolLabel]) != cfg.NodepoolName {
 			continue
 		}
 

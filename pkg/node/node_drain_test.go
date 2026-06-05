@@ -241,6 +241,28 @@ func TestNodeDrainWithReportTrimsNodepoolName(t *testing.T) {
 	}
 }
 
+func TestNodeDrainWithReportRejectsInvalidNodepoolLabelSelector(t *testing.T) {
+	clientSet := fake.NewSimpleClientset()
+	provider := &failingAllocateRateProvider{}
+
+	_, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: provider,
+		Notifier:             fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: "bad nodepool",
+		Eviction:     testEvictionConfig(),
+	})
+	if err == nil {
+		t.Fatal("expected invalid nodepool label selector error")
+	}
+	if !strings.Contains(err.Error(), "invalid nodepool label selector") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("invalid selector should fail before metrics lookup: calls=%d", provider.calls)
+	}
+}
+
 func TestNodeDrainWithReportSkipsMetricsForEmptyNodepool(t *testing.T) {
 	t.Setenv("DRAIN_POLICY", "formula")
 	t.Setenv("DRAIN_ROUNDING", "floor")
@@ -1026,7 +1048,7 @@ func newNode(nodepool string, order int) *coreV1.Node {
 		ObjectMeta: metaV1.ObjectMeta{
 			Name: fmt.Sprintf("node-%d", order),
 			Labels: map[string]string{
-				"karpenter.sh/nodepool":            nodepool,
+				karpenterNodepoolLabel:             nodepool,
 				"beta.kubernetes.io/instance-type": "t3.large",
 			},
 			CreationTimestamp: metaV1.NewTime(ts),
