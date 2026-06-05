@@ -43,6 +43,25 @@ func TestAllocateRateCommandRejectsUnexpectedArgs(t *testing.T) {
 	}
 }
 
+func TestAllocateRateCommandRejectsPrometheusAPIEndpoint(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	prometheusAddress = ""
+	nodepoolName = ""
+	t.Setenv("PROMETHEUS_ADDRESS", "http://localhost:8080/prometheus/api/v1/query")
+	t.Setenv("NODEPOOL_NAME", "test-nodepool")
+
+	err := allocateRateCmd.RunE(&cobra.Command{}, nil)
+	if err == nil {
+		t.Fatal("expected invalid prometheus address error")
+	}
+	if !strings.Contains(err.Error(), "PROMETHEUS_ADDRESS") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestHandleKarpenterAllocateRateReturnsPrometheusClientError(t *testing.T) {
 	t.Setenv("PROMETHEUS_ADDRESS", "://bad")
 	t.Setenv("PROMETHEUS_SCOPE_ORG_ID", "organization-dev")

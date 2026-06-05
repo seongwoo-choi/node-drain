@@ -123,6 +123,25 @@ func TestDrainCommandRejectsInvalidDrainEnvBeforeKubeClient(t *testing.T) {
 	}
 }
 
+func TestDrainCommandRejectsPrometheusAPIEndpointBeforeKubeClient(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+	configureDrainCommandForValidationTest(t)
+	t.Setenv("PROMETHEUS_ADDRESS", "http://localhost:8080/prometheus/api/v1/query")
+
+	err := drainCmd.RunE(&cobra.Command{}, nil)
+	if err == nil {
+		t.Fatal("expected invalid prometheus address error")
+	}
+	if !strings.Contains(err.Error(), "PROMETHEUS_ADDRESS") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(err.Error(), "쿠버네티스 클라이언트") {
+		t.Fatalf("expected prometheus validation before kube client, got: %v", err)
+	}
+}
+
 func TestDrainCommandRejectsInvalidPodEnvBeforeKubeClient(t *testing.T) {
 	restore := snapshotCommandGlobals()
 	defer restore()

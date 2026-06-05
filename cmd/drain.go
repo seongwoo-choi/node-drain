@@ -81,6 +81,9 @@ var drainCmd = &cobra.Command{
 		); err != nil {
 			return err
 		}
+		if err := config.ValidatePrometheusAddress(os.Getenv("PROMETHEUS_ADDRESS")); err != nil {
+			return err
+		}
 		if err := validateDrainCommandConfig(); err != nil {
 			return err
 		}

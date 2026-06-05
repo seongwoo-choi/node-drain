@@ -30,6 +30,9 @@ var (
 			); err != nil {
 				return err
 			}
+			if err := config.ValidatePrometheusAddress(os.Getenv("PROMETHEUS_ADDRESS")); err != nil {
+				return err
+			}
 
 			ctx := command.Context()
 			if ctx == nil {

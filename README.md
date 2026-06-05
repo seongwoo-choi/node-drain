@@ -541,6 +541,8 @@ subjects:
   - 먼저 `karpenter allocate-rate`로 사용률을 확인한 뒤, 트래픽이 낮은 시간대에 실행하세요.
 - **Prometheus 쿼리 실패**
   - `--prometheus-address`가 올바른지, 포트포워딩이 살아있는지 확인하세요.
+  - 주소는 Prometheus base URL이어야 합니다. 예: `http://localhost:8080/prometheus`
+  - `/api/v1/query`까지 포함한 API endpoint를 넣으면 안 됩니다.
   - 멀티테넌시 환경이면 `--prometheus-org-id`가 맞는지 확인하세요.
 - **Slack 알림이 실패하는 경우**
   - `--slack-webhook-url`이 비어 있거나, Webhook이 200을 반환하지 않으면 실패합니다.

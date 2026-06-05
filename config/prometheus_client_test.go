@@ -4,11 +4,73 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/prometheus/client_golang/api"
 )
+
+func TestValidatePrometheusAddress(t *testing.T) {
+	tests := []struct {
+		name    string
+		address string
+		wantErr string
+	}{
+		{
+			name:    "base url",
+			address: "http://localhost:8080/prometheus",
+		},
+		{
+			name:    "base url without path",
+			address: "https://prometheus.example.com",
+		},
+		{
+			name:    "query endpoint",
+			address: "http://localhost:8080/prometheus/api/v1/query",
+			wantErr: "base URL",
+		},
+		{
+			name:    "api root endpoint",
+			address: "http://localhost:8080/api/v1",
+			wantErr: "base URL",
+		},
+		{
+			name:    "missing host",
+			address: "http:///prometheus",
+			wantErr: "host",
+		},
+		{
+			name:    "unsupported scheme",
+			address: "ftp://prometheus.example.com",
+			wantErr: "scheme",
+		},
+		{
+			name:    "empty",
+			address: "",
+			wantErr: "required",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidatePrometheusAddress(tt.address)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidatePrometheusAddress() error = %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
 
 func TestQueryPrometheusWithContextUsesCallerCancellation(t *testing.T) {
 	var requests int32
