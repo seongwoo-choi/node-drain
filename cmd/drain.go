@@ -29,6 +29,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+const drainNotificationTimeout = 10 * time.Second
+
 var (
 	drainPolicy                string
 	drainRounding              string
@@ -140,7 +142,7 @@ func handleNodeDrain(ctx context.Context, clientSet kubernetes.Interface) error 
 	}, drainConfig)
 	if err != nil {
 		slog.Error("노드 드레인 실패", "error", err)
-		if notifyErr := notifier.SendNodeDrainErrorWithSummary(ctx, err, report.Summary); notifyErr != nil {
+		if notifyErr := sendNodeDrainErrorNotification(notifier, err, report.Summary); notifyErr != nil {
 			slog.Error("슬랙 알림 전송 실패", "error", notifyErr)
 		}
 		if outputErr := writeNodeDrainReport(os.Stdout, report, drainOutputFormat); outputErr != nil {
@@ -149,13 +151,36 @@ func handleNodeDrain(ctx context.Context, clientSet kubernetes.Interface) error 
 		return err
 	}
 
-	if err = notifier.SendNodeDrainCompleteWithSummary(ctx, report.Results, report.Summary); err != nil {
+	if err = sendNodeDrainCompleteNotification(notifier, report.Results, report.Summary); err != nil {
 		slog.Error("슬랙 알림 전송 실패", "error", err)
 	}
 	if err = writeNodeDrainReport(os.Stdout, report, drainOutputFormat); err != nil {
 		return fmt.Errorf("드레인 결과 출력 실패: %w", err)
 	}
 	return nil
+}
+
+type nodeDrainSummaryNotifier interface {
+	SendNodeDrainCompleteWithSummary(ctx context.Context, results []types.NodeDrainResult, summary types.NodeDrainSummary) error
+	SendNodeDrainErrorWithSummary(ctx context.Context, err error, summary types.NodeDrainSummary) error
+}
+
+func sendNodeDrainErrorNotification(notifier nodeDrainSummaryNotifier, err error, summary types.NodeDrainSummary) error {
+	if notifier == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), drainNotificationTimeout)
+	defer cancel()
+	return notifier.SendNodeDrainErrorWithSummary(ctx, err, summary)
+}
+
+func sendNodeDrainCompleteNotification(notifier nodeDrainSummaryNotifier, results []types.NodeDrainResult, summary types.NodeDrainSummary) error {
+	if notifier == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), drainNotificationTimeout)
+	defer cancel()
+	return notifier.SendNodeDrainCompleteWithSummary(ctx, results, summary)
 }
 
 func init() {

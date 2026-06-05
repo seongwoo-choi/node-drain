@@ -4,6 +4,7 @@ import (
 	"app/types"
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -508,6 +509,42 @@ func TestParseDrainOutputFormatRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestSendNodeDrainErrorNotificationUsesFreshContext(t *testing.T) {
+	notifier := &recordingNodeDrainSummaryNotifier{}
+
+	if err := sendNodeDrainErrorNotification(notifier, errors.New("drain failed"), types.NodeDrainSummary{}); err != nil {
+		t.Fatalf("sendNodeDrainErrorNotification failed: %v", err)
+	}
+
+	if !notifier.errorCalled {
+		t.Fatal("expected error notification to be called")
+	}
+	if notifier.errorContextErr != nil {
+		t.Fatalf("expected fresh notification context, got context error: %v", notifier.errorContextErr)
+	}
+	if !notifier.errorHasDeadline {
+		t.Fatal("expected error notification context to have deadline")
+	}
+}
+
+func TestSendNodeDrainCompleteNotificationUsesFreshContext(t *testing.T) {
+	notifier := &recordingNodeDrainSummaryNotifier{}
+
+	if err := sendNodeDrainCompleteNotification(notifier, []types.NodeDrainResult{{NodeName: "node-1"}}, types.NodeDrainSummary{}); err != nil {
+		t.Fatalf("sendNodeDrainCompleteNotification failed: %v", err)
+	}
+
+	if !notifier.completeCalled {
+		t.Fatal("expected complete notification to be called")
+	}
+	if notifier.completeContextErr != nil {
+		t.Fatalf("expected fresh notification context, got context error: %v", notifier.completeContextErr)
+	}
+	if !notifier.completeHasDeadline {
+		t.Fatal("expected complete notification context to have deadline")
+	}
+}
+
 type recordingDrainRunLock struct {
 	released          bool
 	releaseContextErr error
@@ -516,6 +553,29 @@ type recordingDrainRunLock struct {
 func (l *recordingDrainRunLock) Release(ctx context.Context) error {
 	l.released = true
 	l.releaseContextErr = ctx.Err()
+	return nil
+}
+
+type recordingNodeDrainSummaryNotifier struct {
+	errorCalled         bool
+	errorContextErr     error
+	errorHasDeadline    bool
+	completeCalled      bool
+	completeContextErr  error
+	completeHasDeadline bool
+}
+
+func (n *recordingNodeDrainSummaryNotifier) SendNodeDrainErrorWithSummary(ctx context.Context, err error, summary types.NodeDrainSummary) error {
+	n.errorCalled = true
+	n.errorContextErr = ctx.Err()
+	_, n.errorHasDeadline = ctx.Deadline()
+	return nil
+}
+
+func (n *recordingNodeDrainSummaryNotifier) SendNodeDrainCompleteWithSummary(ctx context.Context, results []types.NodeDrainResult, summary types.NodeDrainSummary) error {
+	n.completeCalled = true
+	n.completeContextErr = ctx.Err()
+	_, n.completeHasDeadline = ctx.Deadline()
 	return nil
 }
 
