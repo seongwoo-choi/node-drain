@@ -333,6 +333,7 @@ GitHub UI에서 **Actions → drain → Run workflow**로 실행할 수 있습�
 
 - **`SLACK_WEBHOOK_URL`** (선택): Slack 알림을 보내려면 설정
 - **`KUBECONFIG_B64`** (선택): base64 인코딩된 kubeconfig
+  - 설정하면 workflow가 실행 전에 `~/.kube/config`로 복원합니다.
   - 러너가 이미 클러스터에 접근 가능한 self-hosted 환경이면 생략해도 됩니다.
 
 > EKS를 쓰는 경우엔 `aws eks update-kubeconfig` 방식으로 kubeconfig를 만드는 스텝을 워크플로우에 추가하는 것을 권장합니다.

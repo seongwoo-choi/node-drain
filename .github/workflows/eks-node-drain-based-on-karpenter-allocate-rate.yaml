@@ -21,12 +21,9 @@ on:
         required: true
         default: 'devel_eks_cluster'
       PROMETHEUS_ADDRESS:
-        description: '프로메테우스 주소입니다.'
-        type: choice
-        options:
-          - 'http://프로메테우스.com/prometheus'
+        description: 'Prometheus/Mimir 주소입니다.'
+        type: string
         required: true
-        default: 'http://프로메테우스.com/prometheus'
       PROMETHEUS_ORG_ID:
         description: '프로메테우스 미미르 프록시 org-id 입니다.'
         type: choice
@@ -38,11 +35,8 @@ on:
         default: 'organization-dev'
       NODEPOOL_NAME:
         description: '드레인 하려는 Nodepool 이름입니다.'
-        type: choice
-        options:
-          - 'worker-nodepool-name'  
+        type: string
         required: true
-        default: 'worker-nodepool-name'
       KUBE_CONFIG:
         description: '프로그램이 실행되는 위치입니다.'
         type: choice
@@ -52,6 +46,66 @@ on:
           - 'cluster'
         required: true
         default: 'github_action'
+      DRAIN_MIN:
+        description: '드레인 최소 노드 수(0=비활성)'
+        required: false
+        default: '1'
+      DRAIN_MAX_ABSOLUTE:
+        description: '드레인 최대 노드 수(절대값, 0=비활성)'
+        required: false
+        default: '2'
+      DRAIN_MAX_FRACTION:
+        description: '드레인 최대 비율(예: 0.2=20%, 0=비활성)'
+        required: false
+        default: '0.2'
+      DRAIN_SAFETY_MAX_ALLOCATE_RATE:
+        description: '안전 조건: maxAllocateRate >= 값이면 0대로 강제(0=비활성)'
+        required: false
+        default: '90'
+      DRAIN_PROGRESSIVE:
+        description: '점진적 드레인 여부'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+        required: false
+        default: 'true'
+      POD_EVICTION_MODE:
+        description: '파드 제거 방식'
+        type: choice
+        options:
+          - 'evict'
+          - 'delete'
+        required: false
+        default: 'evict'
+      FORCE:
+        description: 'eviction 반복 실패 시 delete로 강제 전환'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+        required: false
+        default: 'false'
+      FORCE_PROBLEM_PODS:
+        description: '문제 파드 즉시 delete(grace=0)'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+        required: false
+        default: 'true'
+      PDB_TOKEN:
+        description: '같은 PDB 동시 처리 제한'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+        required: false
+        default: 'true'
+      PDB_TOKEN_MAX_IN_FLIGHT:
+        description: '같은 PDB 토큰 동시 처리 개수'
+        required: false
+        default: '1'
       EKS_CLUSTER_VERSION:
         description: '클러스터 버전입니다. - ex) v1.28.0 / v1.29.0'
         required: true
@@ -59,11 +113,6 @@ on:
       AWS_ID:
         description: 'AWS 계정 ID 입니다.'
         required: true
-        default: '123456789012'
-      SLACK_WEBHOOK_URL:
-        description: 'Slack 웹훅 URL 입니다.'
-        required: true
-        default: 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXX'
 
 jobs:
   run:
@@ -72,9 +121,9 @@ jobs:
     environment: main
     permissions:
       id-token: write
-      contents: write
+      contents: read
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Install AWS CLI v2
       run: |
@@ -83,7 +132,7 @@ jobs:
         sudo ./aws/install --update
 
     - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v3
+      uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: arn:aws:iam::${{ inputs.AWS_ID }}:role/github_action_role
         aws-region: "ap-northeast-2"
@@ -104,13 +153,14 @@ jobs:
 
     - name: Change kube config
       run: |
-        aws eks update-kubeconfig --name ${{ inputs.CLUSTER_NAME }} --region ap-northeast-2
-        kubectl config use-context arn:aws:eks:ap-northeast-2:${{ inputs.AWS_ID }}:cluster/${{ inputs.CLUSTER_NAME }}
+        aws eks update-kubeconfig --name "${{ inputs.CLUSTER_NAME }}" --region ap-northeast-2
+        kubectl config use-context "arn:aws:eks:ap-northeast-2:${{ inputs.AWS_ID }}:cluster/${{ inputs.CLUSTER_NAME }}"
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
-        go-version: '1.24'
+        go-version-file: go.mod
+        cache: true
 
     - name: Run go vet
       run: go vet ./...
@@ -129,11 +179,33 @@ jobs:
 
     - name: Run
       id: Run
+      shell: bash
+      env:
+        SLACK_WEBHOOK_URL: ${{ vars.SLACK_WEBHOOK_URL }}
       run: |
-        go run main.go ${{ inputs.COMMAND }} \
-          --prometheus-address ${{ inputs.PROMETHEUS_ADDRESS }} \
-          --prometheus-org-id ${{ inputs.PROMETHEUS_ORG_ID }} \
-          --nodepool-name ${{ inputs.NODEPOOL_NAME }} \
-          --slack-webhook-url "${{ vars.SLACK_WEBHOOK_URL }}" \
-          --kube-config ${{ inputs.KUBE_CONFIG }} \
-          --cluster-name ${{ inputs.CLUSTER_NAME }}
+        set -euo pipefail
+
+        cmd=(go run main.go)
+        if [[ "${{ inputs.COMMAND }}" == "drain" ]]; then
+          cmd+=(drain)
+          cmd+=(--drain-min "${{ inputs.DRAIN_MIN }}")
+          cmd+=(--drain-max-absolute "${{ inputs.DRAIN_MAX_ABSOLUTE }}")
+          cmd+=(--drain-max-fraction "${{ inputs.DRAIN_MAX_FRACTION }}")
+          cmd+=(--drain-safety-max-allocate-rate "${{ inputs.DRAIN_SAFETY_MAX_ALLOCATE_RATE }}")
+          cmd+=(--drain-progressive="${{ inputs.DRAIN_PROGRESSIVE }}")
+          cmd+=(--pod-eviction-mode "${{ inputs.POD_EVICTION_MODE }}")
+          cmd+=(--force="${{ inputs.FORCE }}")
+          cmd+=(--force-problem-pods="${{ inputs.FORCE_PROBLEM_PODS }}")
+          cmd+=(--pdb-token="${{ inputs.PDB_TOKEN }}")
+          cmd+=(--pdb-token-max-in-flight "${{ inputs.PDB_TOKEN_MAX_IN_FLIGHT }}")
+        else
+          cmd+=(karpenter allocate-rate)
+        fi
+        cmd+=(--prometheus-address "${{ inputs.PROMETHEUS_ADDRESS }}")
+        cmd+=(--prometheus-org-id "${{ inputs.PROMETHEUS_ORG_ID }}")
+        cmd+=(--nodepool-name "${{ inputs.NODEPOOL_NAME }}")
+        cmd+=(--slack-webhook-url "${SLACK_WEBHOOK_URL:-}")
+        cmd+=(--kube-config "${{ inputs.KUBE_CONFIG }}")
+        cmd+=(--cluster-name "${{ inputs.CLUSTER_NAME }}")
+
+        "${cmd[@]}"

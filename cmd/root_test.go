@@ -144,3 +144,60 @@ func TestDrainWorkflowPassesBooleanInputsWithEquals(t *testing.T) {
 		}
 	}
 }
+
+func TestDrainWorkflowCanConfigureKubeconfigFromSecret(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/drain.yml")
+	if err != nil {
+		t.Fatalf("read workflow failed: %v", err)
+	}
+	text := string(workflow)
+	for _, required := range []string{
+		"KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}",
+		`base64 -d > "${HOME}/.kube/config"`,
+		`chmod 600 "${HOME}/.kube/config"`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("drain workflow missing kubeconfig setup pattern: %s", required)
+		}
+	}
+}
+
+func TestLegacyWorkflowAvoidsPlaceholderDefaults(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/eks-node-drain-based-on-karpenter-allocate-rate.yaml")
+	if err != nil {
+		t.Fatalf("read workflow failed: %v", err)
+	}
+	text := string(workflow)
+	for _, forbidden := range []string{
+		"worker-nodepool-name",
+		"프로메테우스.com",
+		"123456789012",
+		"hooks.slack.com/services/T00000000",
+		"contents: write",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("legacy workflow still contains unsafe placeholder or permission: %s", forbidden)
+		}
+	}
+}
+
+func TestLegacyWorkflowPassesDrainSafetyFlags(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/eks-node-drain-based-on-karpenter-allocate-rate.yaml")
+	if err != nil {
+		t.Fatalf("read workflow failed: %v", err)
+	}
+	text := string(workflow)
+	for _, required := range []string{
+		"cmd=(go run main.go)",
+		`cmd+=(--drain-max-absolute "${{ inputs.DRAIN_MAX_ABSOLUTE }}")`,
+		`cmd+=(--drain-max-fraction "${{ inputs.DRAIN_MAX_FRACTION }}")`,
+		`cmd+=(--drain-safety-max-allocate-rate "${{ inputs.DRAIN_SAFETY_MAX_ALLOCATE_RATE }}")`,
+		`cmd+=(--force="${{ inputs.FORCE }}")`,
+		`cmd+=(--pdb-token="${{ inputs.PDB_TOKEN }}")`,
+		`"${cmd[@]}"`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("legacy workflow missing required safety pattern: %s", required)
+		}
+	}
+}
