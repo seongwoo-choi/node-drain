@@ -88,8 +88,10 @@ func acquirePDBTokens(ctx context.Context, keys []string, maxInFlight int) (func
 		ctx = context.Background()
 	}
 
-	keysCopy := append([]string(nil), keys...)
-	sort.Strings(keysCopy)
+	keysCopy := uniqueSortedPDBTokenKeys(keys)
+	if len(keysCopy) == 0 {
+		return func() {}, nil
+	}
 	maxInFlight = normalizePDBTokenMaxInFlight(maxInFlight)
 
 	var acquired []string
@@ -107,6 +109,23 @@ func acquirePDBTokens(ctx context.Context, keys []string, maxInFlight int) (func
 			releasePDBTokenKeys(acquired)
 		})
 	}, nil
+}
+
+func uniqueSortedPDBTokenKeys(keys []string) []string {
+	keysCopy := append([]string(nil), keys...)
+	sort.Strings(keysCopy)
+
+	unique := make([]string, 0, len(keysCopy))
+	for _, key := range keysCopy {
+		if key == "" {
+			continue
+		}
+		if len(unique) > 0 && unique[len(unique)-1] == key {
+			continue
+		}
+		unique = append(unique, key)
+	}
+	return unique
 }
 
 func releasePDBTokenKeys(acquired []string) {

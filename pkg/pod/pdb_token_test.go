@@ -104,6 +104,23 @@ func TestAcquirePDBTokensHonorsHigherLimitAfterLowerLimitAcquire(t *testing.T) {
 	}
 }
 
+func TestAcquirePDBTokensDeduplicatesKeys(t *testing.T) {
+	resetPDBTokenManagerForTest()
+
+	release, err := acquirePDBTokens(context.Background(), []string{"default/pdb-a", "default/pdb-a", ""}, 1)
+	if err != nil {
+		t.Fatalf("acquirePDBTokens with duplicate keys failed: %v", err)
+	}
+	defer release()
+
+	if got := pdbTokenCountForTest("default/pdb-a"); got != 1 {
+		t.Fatalf("PDB token count = %d, want=1", got)
+	}
+	if got := pdbTokenCountForTest(""); got != 0 {
+		t.Fatalf("empty PDB token count = %d, want=0", got)
+	}
+}
+
 func resetPDBTokenManagerForTest() {
 	globalPDBTokenManager.mu.Lock()
 	defer globalPDBTokenManager.mu.Unlock()
