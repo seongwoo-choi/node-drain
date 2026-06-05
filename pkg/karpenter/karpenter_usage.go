@@ -39,6 +39,9 @@ type PrometheusQuerier struct {
 
 // NewPrometheusQuerier creates a Prometheus-backed metrics querier.
 func NewPrometheusQuerier(client api.Client) *PrometheusQuerier {
+	if client == nil {
+		return &PrometheusQuerier{}
+	}
 	return &PrometheusQuerier{
 		api: v1.NewAPI(client),
 	}
@@ -46,6 +49,12 @@ func NewPrometheusQuerier(client api.Client) *PrometheusQuerier {
 
 // Query executes a Prometheus instant query.
 func (p *PrometheusQuerier) Query(ctx context.Context, query string) (prometheusModel.Vector, error) {
+	if p == nil {
+		return nil, errors.New("prometheus querier is required")
+	}
+	if p.api == nil {
+		return nil, errors.New("prometheus api is required")
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}

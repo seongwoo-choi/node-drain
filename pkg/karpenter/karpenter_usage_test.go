@@ -97,6 +97,30 @@ func TestPrometheusQuerierAllowsNilContext(t *testing.T) {
 	}
 }
 
+func TestPrometheusQuerierRejectsNilReceiver(t *testing.T) {
+	var querier *PrometheusQuerier
+
+	_, err := querier.Query(context.Background(), "up")
+	if err == nil {
+		t.Fatal("expected nil prometheus querier error")
+	}
+	if !strings.Contains(err.Error(), "prometheus querier is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrometheusQuerierRejectsNilAPI(t *testing.T) {
+	querier := NewPrometheusQuerier(nil)
+
+	_, err := querier.Query(context.Background(), "up")
+	if err == nil {
+		t.Fatal("expected nil prometheus api error")
+	}
+	if !strings.Contains(err.Error(), "prometheus api is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestGetKarpenterNodepoolUsageFallsBackToLegacyMetric(t *testing.T) {
 	querier := fakeMetricsQuerier{
 		usageByResource: map[string]float64{"memory": 200 * 1000 * 1000 * 1000},
