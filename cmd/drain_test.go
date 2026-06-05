@@ -248,6 +248,112 @@ func TestApplyDrainFlagEnvUsesExplicitFlag(t *testing.T) {
 	}
 }
 
+func TestApplyDrainRuntimeEnvUsesExistingEnvWhenFlagsOmitted(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	drainDryRun = false
+	drainLockMode = "local"
+	drainLockNamespace = "kube-system"
+	drainLockLeaseDuration = "10m"
+	drainNodeSelectionStrategy = "oldest"
+	drainSkipUnschedulable = false
+	drainOutputFormat = "text"
+
+	t.Setenv("DRAIN_DRY_RUN", "true")
+	t.Setenv("DRAIN_LOCK_MODE", "kubernetes")
+	t.Setenv("DRAIN_LOCK_NAMESPACE", "default")
+	t.Setenv("DRAIN_LOCK_LEASE_DURATION", "30m")
+	t.Setenv("DRAIN_NODE_SELECTION", "empty-first")
+	t.Setenv("DRAIN_SKIP_UNSCHEDULABLE", "true")
+	t.Setenv("DRAIN_OUTPUT_FORMAT", "json")
+
+	command := newDrainRuntimeFlagCommand()
+	applyDrainFlagEnv(command)
+	if err := applyDrainRuntimeEnv(); err != nil {
+		t.Fatalf("applyDrainRuntimeEnv failed: %v", err)
+	}
+
+	if !drainDryRun {
+		t.Fatal("expected DRAIN_DRY_RUN env to enable dry-run")
+	}
+	if drainLockMode != "kubernetes" {
+		t.Fatalf("drainLockMode = %q, want kubernetes", drainLockMode)
+	}
+	if drainLockNamespace != "default" {
+		t.Fatalf("drainLockNamespace = %q, want default", drainLockNamespace)
+	}
+	if drainLockLeaseDuration != "30m" {
+		t.Fatalf("drainLockLeaseDuration = %q, want 30m", drainLockLeaseDuration)
+	}
+	if drainNodeSelectionStrategy != "empty-first" {
+		t.Fatalf("drainNodeSelectionStrategy = %q, want empty-first", drainNodeSelectionStrategy)
+	}
+	if !drainSkipUnschedulable {
+		t.Fatal("expected DRAIN_SKIP_UNSCHEDULABLE env to enable skipping")
+	}
+	if drainOutputFormat != "json" {
+		t.Fatalf("drainOutputFormat = %q, want json", drainOutputFormat)
+	}
+}
+
+func TestApplyDrainRuntimeEnvUsesExplicitFlagOverEnv(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	drainDryRun = false
+	drainLockMode = "none"
+	drainOutputFormat = "text"
+
+	t.Setenv("DRAIN_DRY_RUN", "true")
+	t.Setenv("DRAIN_LOCK_MODE", "kubernetes")
+	t.Setenv("DRAIN_OUTPUT_FORMAT", "json")
+
+	command := newDrainRuntimeFlagCommand()
+	if err := command.Flags().Set("dry-run", "false"); err != nil {
+		t.Fatalf("set dry-run failed: %v", err)
+	}
+	if err := command.Flags().Set("drain-lock-mode", "none"); err != nil {
+		t.Fatalf("set drain-lock-mode failed: %v", err)
+	}
+	if err := command.Flags().Set("output", "text"); err != nil {
+		t.Fatalf("set output failed: %v", err)
+	}
+
+	applyDrainFlagEnv(command)
+	if err := applyDrainRuntimeEnv(); err != nil {
+		t.Fatalf("applyDrainRuntimeEnv failed: %v", err)
+	}
+
+	if drainDryRun {
+		t.Fatal("expected explicit --dry-run=false to override env")
+	}
+	if drainLockMode != "none" {
+		t.Fatalf("expected explicit lock mode to override env, got %q", drainLockMode)
+	}
+	if drainOutputFormat != "text" {
+		t.Fatalf("expected explicit output to override env, got %q", drainOutputFormat)
+	}
+}
+
+func TestApplyDrainRuntimeEnvRejectsInvalidBool(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	t.Setenv("DRAIN_DRY_RUN", "maybe")
+
+	err := applyDrainRuntimeEnv()
+	if err == nil {
+		t.Fatal("expected invalid DRAIN_DRY_RUN error")
+	}
+	if !strings.Contains(err.Error(), "DRAIN_DRY_RUN") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestReleaseDrainRunLockUsesFreshContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -392,6 +498,13 @@ func configureDrainCommandForValidationTest(t *testing.T) {
 		"DRAIN_SAFETY_QUERIES",
 		"DRAIN_SAFETY_FAIL_CLOSED",
 		"DRAIN_PROGRESSIVE",
+		"DRAIN_DRY_RUN",
+		"DRAIN_LOCK_MODE",
+		"DRAIN_LOCK_NAMESPACE",
+		"DRAIN_LOCK_LEASE_DURATION",
+		"DRAIN_NODE_SELECTION",
+		"DRAIN_SKIP_UNSCHEDULABLE",
+		"DRAIN_OUTPUT_FORMAT",
 		"POD_EVICTION_MODE",
 		"POD_FORCE",
 		"POD_FORCE_PROBLEM_PODS",
@@ -471,6 +584,13 @@ func restoreCommandEnv(t *testing.T) {
 		"DRAIN_SAFETY_QUERIES",
 		"DRAIN_SAFETY_FAIL_CLOSED",
 		"DRAIN_PROGRESSIVE",
+		"DRAIN_DRY_RUN",
+		"DRAIN_LOCK_MODE",
+		"DRAIN_LOCK_NAMESPACE",
+		"DRAIN_LOCK_LEASE_DURATION",
+		"DRAIN_NODE_SELECTION",
+		"DRAIN_SKIP_UNSCHEDULABLE",
+		"DRAIN_OUTPUT_FORMAT",
 		"POD_EVICTION_MODE",
 		"POD_FORCE",
 		"POD_FORCE_PROBLEM_PODS",
@@ -484,8 +604,20 @@ func restoreCommandEnv(t *testing.T) {
 		"POD_CHECK_INTERVAL",
 	}
 	for _, key := range keys {
-		t.Setenv(key, os.Getenv(key))
+		t.Setenv(key, "")
 	}
+}
+
+func newDrainRuntimeFlagCommand() *cobra.Command {
+	command := &cobra.Command{}
+	command.Flags().Bool("dry-run", false, "")
+	command.Flags().String("drain-lock-mode", "local", "")
+	command.Flags().String("drain-lock-namespace", "kube-system", "")
+	command.Flags().String("drain-lock-lease-duration", "10m", "")
+	command.Flags().String("drain-node-selection", "oldest", "")
+	command.Flags().Bool("drain-skip-unschedulable", false, "")
+	command.Flags().String("output", "text", "")
+	return command
 }
 
 func snapshotCommandGlobals() func() {

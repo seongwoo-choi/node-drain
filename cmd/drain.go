@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -67,6 +68,9 @@ var drainCmd = &cobra.Command{
 	RunE: func(command *cobra.Command, args []string) error {
 		applyRootFlagEnv(command)
 		applyDrainFlagEnv(command)
+		if err := applyDrainRuntimeEnv(); err != nil {
+			return err
+		}
 
 		if err := validateRequiredEnvValues(
 			requiredEnvValue{flagName: "prometheus-address", envKey: "PROMETHEUS_ADDRESS"},
@@ -261,6 +265,13 @@ func applyDrainFlagEnv(command *cobra.Command) {
 	setEnvFromChangedFlag(command, "drain-safety-queries", "DRAIN_SAFETY_QUERIES", drainSafetyQueries)
 	setEnvFromChangedFlag(command, "drain-safety-fail-closed", "DRAIN_SAFETY_FAIL_CLOSED", fmt.Sprintf("%t", drainSafetyFailClosed))
 	setEnvFromChangedFlag(command, "drain-progressive", "DRAIN_PROGRESSIVE", fmt.Sprintf("%t", drainProgressive))
+	setEnvFromChangedFlag(command, "dry-run", "DRAIN_DRY_RUN", fmt.Sprintf("%t", drainDryRun))
+	setEnvFromChangedFlag(command, "drain-lock-mode", "DRAIN_LOCK_MODE", drainLockMode)
+	setEnvFromChangedFlag(command, "drain-lock-namespace", "DRAIN_LOCK_NAMESPACE", drainLockNamespace)
+	setEnvFromChangedFlag(command, "drain-lock-lease-duration", "DRAIN_LOCK_LEASE_DURATION", drainLockLeaseDuration)
+	setEnvFromChangedFlag(command, "drain-node-selection", "DRAIN_NODE_SELECTION", drainNodeSelectionStrategy)
+	setEnvFromChangedFlag(command, "drain-skip-unschedulable", "DRAIN_SKIP_UNSCHEDULABLE", fmt.Sprintf("%t", drainSkipUnschedulable))
+	setEnvFromChangedFlag(command, "output", "DRAIN_OUTPUT_FORMAT", drainOutputFormat)
 
 	setEnvFromChangedFlag(command, "pod-eviction-mode", "POD_EVICTION_MODE", podEvictionMode)
 	setEnvFromChangedFlag(command, "force", "POD_FORCE", fmt.Sprintf("%t", podForce))
@@ -273,6 +284,46 @@ func applyDrainFlagEnv(command *cobra.Command) {
 	setEnvFromChangedFlag(command, "pod-retry-backoff", "POD_RETRY_BACKOFF", podRetryBackoff)
 	setEnvFromChangedFlag(command, "pod-deletion-timeout", "POD_DELETION_TIMEOUT", podDeletionTimeout)
 	setEnvFromChangedFlag(command, "pod-check-interval", "POD_CHECK_INTERVAL", podCheckInterval)
+}
+
+func applyDrainRuntimeEnv() error {
+	if err := setBoolFromEnv("DRAIN_DRY_RUN", &drainDryRun); err != nil {
+		return err
+	}
+	if err := setBoolFromEnv("DRAIN_SKIP_UNSCHEDULABLE", &drainSkipUnschedulable); err != nil {
+		return err
+	}
+	setStringFromEnv("DRAIN_LOCK_MODE", &drainLockMode)
+	setStringFromEnv("DRAIN_LOCK_NAMESPACE", &drainLockNamespace)
+	setStringFromEnv("DRAIN_LOCK_LEASE_DURATION", &drainLockLeaseDuration)
+	setStringFromEnv("DRAIN_NODE_SELECTION", &drainNodeSelectionStrategy)
+	setStringFromEnv("DRAIN_OUTPUT_FORMAT", &drainOutputFormat)
+	return nil
+}
+
+func setStringFromEnv(envKey string, target *string) {
+	if target == nil {
+		return
+	}
+	if v := strings.TrimSpace(os.Getenv(envKey)); v != "" {
+		*target = v
+	}
+}
+
+func setBoolFromEnv(envKey string, target *bool) error {
+	if target == nil {
+		return nil
+	}
+	v := strings.TrimSpace(os.Getenv(envKey))
+	if v == "" {
+		return nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", envKey, err)
+	}
+	*target = b
+	return nil
 }
 
 func writeNodeDrainReport(w io.Writer, report types.NodeDrainReport, outputFormat string) error {

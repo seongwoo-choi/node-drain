@@ -311,7 +311,23 @@ CLI는 설정을 `명시적으로 전달된 CLI 플래그 > 기존 환경 변수
 | `KUBE_CONFIG` | kube config 모드(`local/cluster/github_action`) |
 | `CLUSTER_NAME` | 클러스터 이름 |
 | `NODEPOOL_NAME` | NodePool 이름 |
+| `DRAIN_POLICY` | 드레인 정책(`formula/step`) |
+| `DRAIN_ROUNDING` | 드레인 계산 라운딩(`floor/round/ceil`) |
+| `DRAIN_MIN` | 드레인 최소 노드 수 |
+| `DRAIN_MAX_ABSOLUTE` | 드레인 최대 노드 수(절대값) |
+| `DRAIN_MAX_FRACTION` | 드레인 최대 비율 |
+| `DRAIN_STEP_RULES` | 계단식 정책 규칙 |
+| `DRAIN_SAFETY_MAX_ALLOCATE_RATE` | 안전 조건 최대 사용률 |
+| `DRAIN_SAFETY_QUERIES` | 추가 안전 조건 PromQL |
+| `DRAIN_SAFETY_FAIL_CLOSED` | 안전 조건 쿼리 실패 시 중단 여부 |
 | `DRAIN_PROGRESSIVE` | 점진적 드레인 여부 |
+| `DRAIN_DRY_RUN` | dry-run 실행 여부 |
+| `DRAIN_LOCK_MODE` | 중복 실행 lock 방식(`local/kubernetes/none`) |
+| `DRAIN_LOCK_NAMESPACE` | Kubernetes Lease lock namespace |
+| `DRAIN_LOCK_LEASE_DURATION` | Kubernetes Lease lock 만료 시간 |
+| `DRAIN_NODE_SELECTION` | 드레인 대상 노드 선택 전략 |
+| `DRAIN_SKIP_UNSCHEDULABLE` | 이미 cordon된 노드 제외 여부 |
+| `DRAIN_OUTPUT_FORMAT` | 결과 출력 형식(`text/json`) |
 | `POD_EVICTION_MODE` | `evict` 또는 `delete` |
 | `POD_FORCE` | eviction 실패 시 delete 폴백 |
 | `POD_FORCE_PROBLEM_PODS` | 문제 파드 즉시 강제 삭제 |
