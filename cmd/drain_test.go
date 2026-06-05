@@ -69,6 +69,31 @@ func TestDrainCommandReturnsKubeClientError(t *testing.T) {
 	}
 }
 
+func TestDrainCommandRequiresTargetSettings(t *testing.T) {
+	if drainCmd.RunE == nil {
+		t.Fatal("drain command RunE is nil")
+	}
+
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	prometheusAddress = ""
+	clusterName = ""
+	nodepoolName = ""
+	t.Setenv("PROMETHEUS_ADDRESS", "")
+	t.Setenv("CLUSTER_NAME", "")
+	t.Setenv("NODEPOOL_NAME", "")
+
+	err := drainCmd.RunE(&cobra.Command{}, nil)
+	if err == nil {
+		t.Fatal("expected required setting error, got nil")
+	}
+	if !strings.Contains(err.Error(), "prometheus-address") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestAcquireDrainRunLockBlocksDuplicate(t *testing.T) {
 	lockFile, err := acquireLocalDrainRunLock("test-cluster", "test-nodepool")
 	if err != nil {

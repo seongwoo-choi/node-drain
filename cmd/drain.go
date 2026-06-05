@@ -67,6 +67,14 @@ var drainCmd = &cobra.Command{
 		applyRootFlagEnv(command)
 		applyDrainFlagEnv(command)
 
+		if err := validateRequiredEnvValues(
+			requiredEnvValue{flagName: "prometheus-address", envKey: "PROMETHEUS_ADDRESS"},
+			requiredEnvValue{flagName: "cluster-name", envKey: "CLUSTER_NAME"},
+			requiredEnvValue{flagName: "nodepool-name", envKey: "NODEPOOL_NAME"},
+		); err != nil {
+			return err
+		}
+
 		ctx := command.Context()
 		if ctx == nil {
 			ctx = context.Background()

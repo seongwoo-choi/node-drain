@@ -23,6 +23,13 @@ var (
 		RunE: func(command *cobra.Command, args []string) error {
 			applyRootFlagEnv(command)
 
+			if err := validateRequiredEnvValues(
+				requiredEnvValue{flagName: "prometheus-address", envKey: "PROMETHEUS_ADDRESS"},
+				requiredEnvValue{flagName: "nodepool-name", envKey: "NODEPOOL_NAME"},
+			); err != nil {
+				return err
+			}
+
 			ctx := command.Context()
 			if ctx == nil {
 				ctx = context.Background()

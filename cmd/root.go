@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -31,13 +33,13 @@ func Execute() error {
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	rootCmd.PersistentFlags().StringVar(&prometheusAddress, "prometheus-address", "http://localhost:8080/prometheus", "Prometheus 서버 주소")
-	rootCmd.PersistentFlags().StringVar(&prometheusOrgID, "prometheus-org-id", "organization-dev", "Prometheus 조직 ID")
+	rootCmd.PersistentFlags().StringVar(&prometheusAddress, "prometheus-address", "", "Prometheus 서버 주소")
+	rootCmd.PersistentFlags().StringVar(&prometheusOrgID, "prometheus-org-id", "", "Prometheus 조직 ID")
 	rootCmd.PersistentFlags().StringVar(&slackWebhookURL, "slack-webhook-url", "", "Slack Webhook URL")
 	rootCmd.PersistentFlags().StringVar(&kubeConfig, "kube-config", "local", "Kubernetes 설정 (local 또는 cluster)")
 	rootCmd.PersistentFlags().StringVar(&kubeConfigPath, "kube-config-path", "", "Kubernetes config 파일 경로 (선택)")
 	rootCmd.PersistentFlags().StringVar(&clusterName, "cluster-name", "", "클러스터 이름")
-	rootCmd.PersistentFlags().StringVar(&nodepoolName, "nodepool-name", "devel-nodepool-name", "노드풀 이름")
+	rootCmd.PersistentFlags().StringVar(&nodepoolName, "nodepool-name", "", "노드풀 이름")
 }
 
 func initConfig() {
@@ -59,7 +61,7 @@ func setEnvFromFlagOrDefault(command *cobra.Command, flagName string, envKey str
 		_ = os.Setenv(envKey, value)
 		return
 	}
-	if _, exists := os.LookupEnv(envKey); exists {
+	if envValue, exists := os.LookupEnv(envKey); exists && strings.TrimSpace(envValue) != "" {
 		return
 	}
 	if value != "" {
@@ -79,4 +81,19 @@ func commandFlagChanged(command *cobra.Command, flagName string) bool {
 	}
 	flag := command.Flag(flagName)
 	return flag != nil && flag.Changed
+}
+
+type requiredEnvValue struct {
+	envKey   string
+	flagName string
+}
+
+func validateRequiredEnvValues(values ...requiredEnvValue) error {
+	for _, value := range values {
+		if strings.TrimSpace(os.Getenv(value.envKey)) != "" {
+			continue
+		}
+		return fmt.Errorf("필수 설정이 비어 있습니다: --%s 또는 %s를 설정하세요", value.flagName, value.envKey)
+	}
+	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/api"
@@ -26,13 +27,16 @@ func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 func CreatePrometheusClient() (api.Client, error) {
+	headers := map[string]string{}
+	if orgID := strings.TrimSpace(os.Getenv("PROMETHEUS_SCOPE_ORG_ID")); orgID != "" {
+		headers["X-Scope-OrgID"] = orgID
+	}
+
 	config := api.Config{
 		Address: os.Getenv("PROMETHEUS_ADDRESS"),
 		RoundTripper: &headerRoundTripper{
-			headers: map[string]string{
-				"X-Scope-OrgID": os.Getenv("PROMETHEUS_SCOPE_ORG_ID"),
-			},
-			rt: http.DefaultTransport,
+			headers: headers,
+			rt:      http.DefaultTransport,
 		},
 	}
 	return api.NewClient(config)

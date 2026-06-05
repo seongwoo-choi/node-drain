@@ -287,12 +287,12 @@ Karpenter 관련 메트릭을 조회해 NodePool의 자원 사용률(Allocate Ra
 
 | 플래그 | 기본값 | 설명 |
 | --- | ---: | --- |
-| `--prometheus-address` | `http://localhost:8080/prometheus` | Prometheus 서버 주소 |
-| `--prometheus-org-id` | `organization-dev` | 멀티테넌시 환경에서 사용하는 Org ID (`X-Scope-OrgID`) |
+| `--prometheus-address` | `""` | Prometheus 서버 주소(`drain`, `karpenter allocate-rate` 필수) |
+| `--prometheus-org-id` | `""` | 멀티테넌시 환경에서 사용하는 Org ID (`X-Scope-OrgID`, 선택) |
 | `--slack-webhook-url` | `""` | Slack Webhook URL (`drain`에서 권장, 미지정 시 알림 생략) |
 | `--kube-config` | `local` | `local`, `cluster`, `github_action` |
-| `--cluster-name` | `""` | 알림 메시지에 포함될 클러스터 이름 |
-| `--nodepool-name` | `devel-nodepool-name` | 드레인 대상 NodePool 이름 |
+| `--cluster-name` | `""` | 클러스터 이름(`drain` 필수, PromQL cluster matcher에도 사용) |
+| `--nodepool-name` | `""` | 대상 NodePool 이름(`drain`, `karpenter allocate-rate` 필수) |
 
 ---
 
@@ -300,6 +300,7 @@ Karpenter 관련 메트릭을 조회해 NodePool의 자원 사용률(Allocate Ra
 
 CLI는 설정을 `명시적으로 전달된 CLI 플래그 > 기존 환경 변수 > 기본값` 순서로 해석합니다.
 `drain`/pod 정책 플래그는 명시적으로 전달한 경우에만 아래 환경 변수로 반영되며, 플래그를 생략하면 기존 환경 변수를 덮어쓰지 않습니다.
+대상값 placeholder 기본값은 사용하지 않습니다. 필수값이 비어 있으면 Kubernetes 조작 전에 실패합니다.
 
 | 환경 변수 | 설명 |
 | --- | --- |
