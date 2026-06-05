@@ -156,7 +156,10 @@ func (s *SlackNotifier) formatNodeDrainMessage(results []types.NodeDrainResult) 
 	dryRun := allResultsDryRun(results)
 	message := fmt.Sprintf("🔄 노드 드레인 작업이 완료되었습니다 (클러스터: %s, Nodepool: %s)\n\n", s.clusterName, s.nodepoolName)
 	if dryRun {
-		message = fmt.Sprintf("ℹ️ 노드 드레인 dry-run 계획 생성 완료 (클러스터: %s, Nodepool: %s)\n\n", s.clusterName, s.nodepoolName)
+		message = fmt.Sprintf("⚠️ 노드 드레인 dry-run 계획 생성 실패/일부 실패 (클러스터: %s, Nodepool: %s)\n\n", s.clusterName, s.nodepoolName)
+		if allResultsSuccessful(results) {
+			message = fmt.Sprintf("ℹ️ 노드 드레인 dry-run 계획 생성 완료 (클러스터: %s, Nodepool: %s)\n\n", s.clusterName, s.nodepoolName)
+		}
 	}
 
 	for _, result := range results {
@@ -194,6 +197,18 @@ func allResultsDryRun(results []types.NodeDrainResult) bool {
 	}
 	for _, result := range results {
 		if !result.DryRun {
+			return false
+		}
+	}
+	return true
+}
+
+func allResultsSuccessful(results []types.NodeDrainResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	for _, result := range results {
+		if !result.Success {
 			return false
 		}
 	}

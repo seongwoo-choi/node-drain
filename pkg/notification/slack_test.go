@@ -99,6 +99,37 @@ func TestFormatNodeDrainDryRunMessage(t *testing.T) {
 	}
 }
 
+func TestFormatNodeDrainDryRunFailureMessage(t *testing.T) {
+	notifier := NewSlackNotifier(SlackConfig{
+		ClusterName:  "test-cluster",
+		NodepoolName: "test-pool",
+	})
+
+	message := notifier.formatNodeDrainMessage([]types.NodeDrainResult{
+		{
+			NodeName:      "node-1",
+			InstanceType:  "t3.medium",
+			NodepoolName:  "test-pool",
+			DryRun:        true,
+			Success:       false,
+			FailureReason: "pod list failed",
+		},
+	})
+
+	if strings.Contains(message, "dry-run 계획 생성 완료") {
+		t.Fatalf("dry-run failure should not use success header: %s", message)
+	}
+	if !strings.Contains(message, "dry-run 계획 생성 실패/일부 실패") {
+		t.Fatalf("dry-run failure header missing: %s", message)
+	}
+	if !strings.Contains(message, "상태: 실패") {
+		t.Fatalf("dry-run failure status missing: %s", message)
+	}
+	if !strings.Contains(message, "실패 사유: pod list failed") {
+		t.Fatalf("dry-run failure reason missing: %s", message)
+	}
+}
+
 func TestFormatNodeDrainSummaryBlockIncludesOutcomeSignals(t *testing.T) {
 	message := formatNodeDrainSummaryBlock(types.NodeDrainSummary{
 		TargetNodepool:         "test-pool",
