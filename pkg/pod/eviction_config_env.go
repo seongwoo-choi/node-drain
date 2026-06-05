@@ -113,7 +113,7 @@ func ValidateEvictionConfigEnv() error {
 			return err
 		}
 	}
-	if err := validateNonNegativeEnvInt("POD_MAX_RETRIES"); err != nil {
+	if err := validatePositiveEnvInt("POD_MAX_RETRIES"); err != nil {
 		return err
 	}
 	for _, key := range []string{"POD_RETRY_BACKOFF", "POD_DELETION_TIMEOUT", "POD_CHECK_INTERVAL"} {

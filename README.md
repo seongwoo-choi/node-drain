@@ -334,7 +334,7 @@ CLI는 설정을 `명시적으로 전달된 CLI 플래그 > 기존 환경 변수
 | `POD_PDB_TOKEN` | PDB 토큰 사용 여부 |
 | `POD_PDB_TOKEN_MAX_IN_FLIGHT` | PDB 토큰 동시 처리 개수 |
 | `POD_MAX_CONCURRENT` | 동시 처리 Pod 수 |
-| `POD_MAX_RETRIES` | 최대 재시도 횟수 |
+| `POD_MAX_RETRIES` | 최대 재시도 횟수(양수) |
 | `POD_RETRY_BACKOFF` | 재시도 간격 |
 | `POD_DELETION_TIMEOUT` | 삭제 대기 타임아웃 |
 | `POD_CHECK_INTERVAL` | 상태 확인 주기 |

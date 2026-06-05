@@ -15,6 +15,7 @@ func TestValidateEvictionConfigEnvRejectsInvalidValues(t *testing.T) {
 		{name: "invalid mode", key: "POD_EVICTION_MODE", val: "replace", want: "POD_EVICTION_MODE"},
 		{name: "invalid bool", key: "POD_FORCE", val: "maybe", want: "POD_FORCE"},
 		{name: "zero concurrency", key: "POD_MAX_CONCURRENT", val: "0", want: "POD_MAX_CONCURRENT"},
+		{name: "zero retries", key: "POD_MAX_RETRIES", val: "0", want: "POD_MAX_RETRIES"},
 		{name: "negative retries", key: "POD_MAX_RETRIES", val: "-1", want: "POD_MAX_RETRIES"},
 		{name: "invalid duration", key: "POD_RETRY_BACKOFF", val: "soon", want: "POD_RETRY_BACKOFF"},
 	}
