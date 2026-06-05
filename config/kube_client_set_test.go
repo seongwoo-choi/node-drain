@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,18 @@ func TestGetKubeClientSetTrimsLocalModeAndPath(t *testing.T) {
 	}
 }
 
+func TestGetKubeClientSetNormalizesModeCasing(t *testing.T) {
+	kubeConfigPath := writeTestKubeConfig(t)
+
+	clientSet, err := GetKubeClientSet(" LOCAL ", kubeConfigPath)
+	if err != nil {
+		t.Fatalf("GetKubeClientSet() failed: %v", err)
+	}
+	if clientSet == nil {
+		t.Fatal("expected kubernetes clientset")
+	}
+}
+
 func TestResolveKubeConfigPathTrimsEnvPath(t *testing.T) {
 	kubeConfigPath := writeTestKubeConfig(t)
 	t.Setenv("KUBECONFIG", " "+kubeConfigPath+" ")
@@ -25,6 +38,19 @@ func TestResolveKubeConfigPathTrimsEnvPath(t *testing.T) {
 	got := resolveKubeConfigPath("")
 	if got != kubeConfigPath {
 		t.Fatalf("resolveKubeConfigPath() = %q, want=%q", got, kubeConfigPath)
+	}
+}
+
+func TestGetClientSetRejectsNilConfig(t *testing.T) {
+	clientSet, err := getClientSet(nil)
+	if err == nil {
+		t.Fatal("expected nil kubernetes config error")
+	}
+	if clientSet != nil {
+		t.Fatalf("expected nil clientset, got %v", clientSet)
+	}
+	if !strings.Contains(err.Error(), "kubernetes config is required") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

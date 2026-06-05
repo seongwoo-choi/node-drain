@@ -14,7 +14,7 @@ import (
 
 // GetKubeClientSet returns a Kubernetes clientset by configuration mode.
 func GetKubeClientSet(kubeConfigMode string, kubeConfigPath string) (kubernetes.Interface, error) {
-	kubeConfigMode = strings.TrimSpace(kubeConfigMode)
+	kubeConfigMode = strings.ToLower(strings.TrimSpace(kubeConfigMode))
 	switch {
 	case kubeConfigMode == "github_action", kubeConfigMode == "local":
 		configPath := resolveKubeConfigPath(kubeConfigPath)
@@ -52,6 +52,9 @@ func resolveKubeConfigPath(path string) string {
 }
 
 func getClientSet(config *rest.Config) (kubernetes.Interface, error) {
+	if config == nil {
+		return nil, fmt.Errorf("kubernetes config is required")
+	}
 	clientSet, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, err
