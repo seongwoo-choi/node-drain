@@ -72,6 +72,9 @@ func NodeDrainWithReport(ctx context.Context, clientSet kubernetes.Interface, de
 	if cfg.NodepoolName == "" {
 		return report, fmt.Errorf("nodepool name is required")
 	}
+	if clientSet == nil {
+		return report, fmt.Errorf("kubernetes client is required")
+	}
 	report.Summary.TargetNodepool = cfg.NodepoolName
 	report.Summary.DryRun = cfg.DryRun
 	if _, err := parseNodeSelectionStrategy(cfg.NodeSelectionStrategy); err != nil {

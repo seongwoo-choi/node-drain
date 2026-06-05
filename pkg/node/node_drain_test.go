@@ -182,6 +182,19 @@ func TestNodeDrainSelectsExpectedNodeCount(t *testing.T) {
 	}
 }
 
+func TestNodeDrainWithReportRejectsNilKubernetesClient(t *testing.T) {
+	_, err := NodeDrainWithReport(context.Background(), nil, DrainDependencies{}, DrainConfig{
+		NodepoolName: "test-nodepool",
+		Eviction:     testEvictionConfig(),
+	})
+	if err == nil {
+		t.Fatal("expected nil kubernetes client error")
+	}
+	if !strings.Contains(err.Error(), "kubernetes client is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestNodeDrainWithReportSkipsMetricsForEmptyNodepool(t *testing.T) {
 	t.Setenv("DRAIN_POLICY", "formula")
 	t.Setenv("DRAIN_ROUNDING", "floor")
