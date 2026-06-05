@@ -117,7 +117,7 @@ func handleNodeDrain(ctx context.Context, clientSet kubernetes.Interface) error 
 
 	nodepool := os.Getenv("NODEPOOL_NAME")
 	metricsQuerier := karpenter.NewPrometheusQuerier(prometheusClient)
-	karpenterClient := karpenter.NewClientForCluster(nodepool, os.Getenv("CLUSTER_NAME"), metricsQuerier)
+	karpenterClient := newKarpenterClientFromEnv(metricsQuerier)
 	notifier := notification.NewSlackNotifier(notification.SlackConfig{
 		WebhookURL:   os.Getenv("SLACK_WEBHOOK_URL"),
 		ClusterName:  os.Getenv("CLUSTER_NAME"),

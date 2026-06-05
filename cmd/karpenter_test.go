@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	prometheusModel "github.com/prometheus/common/model"
 	"github.com/spf13/cobra"
 )
 
@@ -54,4 +55,46 @@ func TestHandleKarpenterAllocateRateReturnsPrometheusClientError(t *testing.T) {
 	if !strings.Contains(err.Error(), "Prometheus 클라이언트 생성 실패") {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func TestNewKarpenterClientFromEnvScopesClusterWhenProvided(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	t.Setenv("NODEPOOL_NAME", "test-nodepool")
+	t.Setenv("CLUSTER_NAME", "test-cluster")
+
+	querier := &cmdRecordingMetricsQuerier{}
+	client := newKarpenterClientFromEnv(querier)
+
+	if _, err := client.GetKarpenterNodepoolUsage(context.Background(), "cpu"); err != nil {
+		t.Fatalf("GetKarpenterNodepoolUsage failed: %v", err)
+	}
+	if len(querier.queries) != 1 {
+		t.Fatalf("query count = %d, want=1", len(querier.queries))
+	}
+	query := querier.queries[0]
+	for _, want := range []string{
+		`nodepool="test-nodepool"`,
+		`cluster="test-cluster"`,
+		`resource_type="cpu"`,
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("query missing %q: %s", want, query)
+		}
+	}
+}
+
+type cmdRecordingMetricsQuerier struct {
+	queries []string
+}
+
+func (r *cmdRecordingMetricsQuerier) Query(ctx context.Context, query string) (prometheusModel.Vector, error) {
+	r.queries = append(r.queries, query)
+	return prometheusModel.Vector{
+		&prometheusModel.Sample{
+			Value: prometheusModel.SampleValue(100),
+		},
+	}, nil
 }

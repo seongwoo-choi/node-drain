@@ -50,9 +50,8 @@ func handleKarpenterAllocateRate(ctx context.Context) error {
 		return fmt.Errorf("Prometheus 클라이언트 생성 실패: %w", err)
 	}
 
-	nodepool := os.Getenv("NODEPOOL_NAME")
 	metricsQuerier := karpenter.NewPrometheusQuerier(prometheusClient)
-	karpenterClient := karpenter.NewClient(nodepool, metricsQuerier)
+	karpenterClient := newKarpenterClientFromEnv(metricsQuerier)
 
 	memoryAllocateRate, err := karpenterClient.GetAllocateRate(ctx, "memory")
 	if err != nil {
@@ -69,6 +68,14 @@ func handleKarpenterAllocateRate(ctx context.Context) error {
 	slog.Info("Karpenter", "memoryAllocateRate", fmt.Sprintf("%d %%", memoryAllocateRate))
 	slog.Info("Karpenter", "cpuAllocateRate", fmt.Sprintf("%d %%", cpuAllocateRate))
 	return nil
+}
+
+func newKarpenterClientFromEnv(querier karpenter.MetricsQuerier) *karpenter.Client {
+	return karpenter.NewClientForCluster(
+		os.Getenv("NODEPOOL_NAME"),
+		os.Getenv("CLUSTER_NAME"),
+		querier,
+	)
 }
 
 func init() {
