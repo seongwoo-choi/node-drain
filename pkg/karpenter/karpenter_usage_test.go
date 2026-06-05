@@ -242,6 +242,120 @@ func TestClientRejectsNilReceiver(t *testing.T) {
 	}
 }
 
+func TestClientRejectsEmptyNodepoolName(t *testing.T) {
+	querier := &recordingMetricsQuerier{}
+	client := NewClientForCluster(" ", "cluster-a", querier)
+
+	for _, call := range []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "nodepool usage",
+			run: func() error {
+				_, err := client.GetKarpenterNodepoolUsage(context.Background(), "memory")
+				return err
+			},
+		},
+		{
+			name: "pod request",
+			run: func() error {
+				_, err := client.GetKarpenterPodRequest(context.Background(), "memory")
+				return err
+			},
+		},
+		{
+			name: "allocate rate",
+			run: func() error {
+				_, err := client.GetAllocateRate(context.Background(), "memory")
+				return err
+			},
+		},
+	} {
+		t.Run(call.name, func(t *testing.T) {
+			err := call.run()
+			if err == nil {
+				t.Fatal("expected empty nodepool error")
+			}
+			if !strings.Contains(err.Error(), "nodepool name is required") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+	if len(querier.queries) != 0 {
+		t.Fatalf("expected no prometheus queries, got %d: %v", len(querier.queries), querier.queries)
+	}
+}
+
+func TestClientRejectsUnsupportedResourceTypeBeforeQuery(t *testing.T) {
+	for _, resourceType := range []string{"", "disk"} {
+		resourceType := resourceType
+		t.Run(resourceType, func(t *testing.T) {
+			querier := &recordingMetricsQuerier{}
+			client := NewClientForCluster("nodepool-a", "cluster-a", querier)
+
+			for _, call := range []struct {
+				name string
+				run  func() error
+			}{
+				{
+					name: "nodepool usage",
+					run: func() error {
+						_, err := client.GetKarpenterNodepoolUsage(context.Background(), resourceType)
+						return err
+					},
+				},
+				{
+					name: "pod request",
+					run: func() error {
+						_, err := client.GetKarpenterPodRequest(context.Background(), resourceType)
+						return err
+					},
+				},
+				{
+					name: "allocate rate",
+					run: func() error {
+						_, err := client.GetAllocateRate(context.Background(), resourceType)
+						return err
+					},
+				},
+			} {
+				t.Run(call.name, func(t *testing.T) {
+					err := call.run()
+					if err == nil {
+						t.Fatal("expected unsupported resource type error")
+					}
+					if !strings.Contains(err.Error(), "unsupported resource type") {
+						t.Fatalf("unexpected error: %v", err)
+					}
+				})
+			}
+			if len(querier.queries) != 0 {
+				t.Fatalf("expected no prometheus queries, got %d: %v", len(querier.queries), querier.queries)
+			}
+		})
+	}
+}
+
+func TestClientTrimsResourceTypeMatchers(t *testing.T) {
+	querier := &recordingMetricsQuerier{}
+	client := NewClientForCluster("nodepool-a", "cluster-a", querier)
+
+	if _, err := client.GetKarpenterPodRequest(context.Background(), " cpu "); err != nil {
+		t.Fatalf("GetKarpenterPodRequest() error = %v", err)
+	}
+	if len(querier.queries) != 1 {
+		t.Fatalf("query count = %d, want=1", len(querier.queries))
+	}
+	query := querier.queries[0]
+	if !strings.Contains(query, `resource_type="cpu"`) {
+		t.Fatalf("query missing trimmed resource type: %s", query)
+	}
+	if strings.Contains(query, `resource_type=" cpu "`) {
+		t.Fatalf("query contains untrimmed resource type: %s", query)
+	}
+}
+
 func TestGetKarpenterPodRequestDeduplicatesScrapeTargets(t *testing.T) {
 	querier := &recordingMetricsQuerier{}
 	client := NewClientForCluster("nodepool-a", "cluster-a", querier)

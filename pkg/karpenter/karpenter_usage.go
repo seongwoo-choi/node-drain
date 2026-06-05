@@ -106,6 +106,10 @@ func (c *Client) GetKarpenterPodRequest(ctx context.Context, resourceType string
 	if err := c.validate(); err != nil {
 		return 0, err
 	}
+	if err := validateResourceType(resourceType); err != nil {
+		return 0, err
+	}
+	resourceType = strings.TrimSpace(resourceType)
 	matchers := c.resourceLabelMatchers(resourceType)
 	podRequests := fmt.Sprintf(
 		"max without (%s) (karpenter_nodes_total_pod_requests{%s})",
@@ -136,6 +140,10 @@ func (c *Client) GetKarpenterNodepoolUsage(ctx context.Context, resourceType str
 	if err := c.validate(); err != nil {
 		return 0, err
 	}
+	if err := validateResourceType(resourceType); err != nil {
+		return 0, err
+	}
+	resourceType = strings.TrimSpace(resourceType)
 	var emptyErr error
 	matchers := c.resourceLabelMatchers(resourceType)
 	for _, metricName := range nodepoolUsageMetricNames {
@@ -170,7 +178,19 @@ func (c *Client) validate() error {
 	if c.querier == nil {
 		return errors.New("metrics querier is required")
 	}
+	if strings.TrimSpace(c.nodepoolName) == "" {
+		return errors.New("nodepool name is required")
+	}
 	return nil
+}
+
+func validateResourceType(resourceType string) error {
+	switch strings.TrimSpace(resourceType) {
+	case "memory", "cpu":
+		return nil
+	default:
+		return fmt.Errorf("unsupported resource type: %s", resourceType)
+	}
 }
 
 func (c *Client) resourceLabelMatchers(resourceType string) string {
@@ -190,6 +210,14 @@ func prometheusLabelMatcher(key string, value string) string {
 
 // GetAllocateRate returns pod-request to nodepool-usage ratio in percent.
 func (c *Client) GetAllocateRate(ctx context.Context, resourceType string) (int, error) {
+	if err := c.validate(); err != nil {
+		return 0, err
+	}
+	if err := validateResourceType(resourceType); err != nil {
+		return 0, err
+	}
+	resourceType = strings.TrimSpace(resourceType)
+
 	nodepoolUsage, err := c.GetKarpenterNodepoolUsage(ctx, resourceType)
 	if err != nil {
 		return 0, err
