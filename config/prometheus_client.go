@@ -79,10 +79,13 @@ func QueryPrometheus(client api.Client, query string) (model.Vector, error) {
 }
 
 func QueryPrometheusWithContext(ctx context.Context, client api.Client, query string) (model.Vector, error) {
-	v1api := v1.NewAPI(client)
+	if client == nil {
+		return nil, errors.New("prometheus client is required")
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	v1api := v1.NewAPI(client)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 

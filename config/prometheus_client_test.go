@@ -106,6 +106,22 @@ func TestQueryPrometheusWithContextUsesCallerCancellation(t *testing.T) {
 	}
 }
 
+func TestQueryPrometheusWithContextRejectsNilClient(t *testing.T) {
+	if _, err := QueryPrometheusWithContext(context.Background(), nil, "up"); err == nil {
+		t.Fatal("expected nil prometheus client error")
+	} else if !strings.Contains(err.Error(), "prometheus client is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestQueryPrometheusRejectsNilClient(t *testing.T) {
+	if _, err := QueryPrometheus(nil, "up"); err == nil {
+		t.Fatal("expected nil prometheus client error")
+	} else if !strings.Contains(err.Error(), "prometheus client is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestQueryPrometheusWithContextParsesVector(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
