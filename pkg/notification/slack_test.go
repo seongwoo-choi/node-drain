@@ -69,6 +69,62 @@ func TestSlackNoWebhookIsNoop(t *testing.T) {
 	}
 }
 
+func TestSlackWhitespaceWebhookIsNoop(t *testing.T) {
+	attempts := 0
+	notifier := NewSlackNotifier(SlackConfig{
+		WebhookURL:   "   ",
+		ClusterName:  " test-cluster ",
+		NodepoolName: " test-pool ",
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				attempts++
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader("ok")),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+	})
+
+	if err := notifier.SendNodeCount(context.Background(), 3); err != nil {
+		t.Fatalf("SendNodeCount should no-op with whitespace webhook: %v", err)
+	}
+	if attempts != 0 {
+		t.Fatalf("whitespace webhook should not send request, attempts=%d", attempts)
+	}
+	if notifier.clusterName != "test-cluster" {
+		t.Fatalf("clusterName not trimmed: %q", notifier.clusterName)
+	}
+	if notifier.nodepoolName != "test-pool" {
+		t.Fatalf("nodepoolName not trimmed: %q", notifier.nodepoolName)
+	}
+}
+
+func TestSlackNilContextUsesBackground(t *testing.T) {
+	notifier := NewSlackNotifier(SlackConfig{
+		WebhookURL:   "https://example.com/webhook",
+		ClusterName:  "test-cluster",
+		NodepoolName: "test-pool",
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if req.Context() == nil {
+					t.Fatal("request context is nil")
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader("ok")),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+	})
+
+	if err := notifier.SendNodeCount(nil, 3); err != nil {
+		t.Fatalf("SendNodeCount with nil context failed: %v", err)
+	}
+}
+
 func TestFormatNodeDrainDryRunMessage(t *testing.T) {
 	notifier := NewSlackNotifier(SlackConfig{
 		ClusterName:  "test-cluster",

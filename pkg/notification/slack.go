@@ -71,9 +71,9 @@ func NewSlackNotifier(cfg SlackConfig) *SlackNotifier {
 	}
 
 	return &SlackNotifier{
-		webhookURL:   cfg.WebhookURL,
-		clusterName:  cfg.ClusterName,
-		nodepoolName: cfg.NodepoolName,
+		webhookURL:   strings.TrimSpace(cfg.WebhookURL),
+		clusterName:  strings.TrimSpace(cfg.ClusterName),
+		nodepoolName: strings.TrimSpace(cfg.NodepoolName),
 		maxRetries:   maxRetries,
 		retryBackoff: retryBackoff,
 		client:       client,
@@ -265,6 +265,10 @@ func formatNodeDrainSummaryBlock(summary types.NodeDrainSummary) string {
 }
 
 func (s *SlackNotifier) sendSlackMessage(ctx context.Context, message string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	payload := SlackMessage{Text: message}
 	jsonPayload, err := json.Marshal(payload)
 	if err != nil {
