@@ -110,6 +110,21 @@ func TestLocalDrainRunLockReleaseIsIdempotent(t *testing.T) {
 	releaseDrainRunLock(ctx, lockFile)
 }
 
+func TestReleaseDrainRunLockUsesFreshContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	lock := &recordingDrainRunLock{}
+
+	releaseDrainRunLock(ctx, lock)
+
+	if !lock.released {
+		t.Fatal("expected lock to be released")
+	}
+	if lock.releaseContextErr != nil {
+		t.Fatalf("expected fresh release context, got context error: %v", lock.releaseContextErr)
+	}
+}
+
 func TestAcquireKubernetesDrainRunLockBlocksDuplicate(t *testing.T) {
 	ctx := context.Background()
 	clientSet := fake.NewSimpleClientset()
@@ -212,6 +227,17 @@ func TestParseDrainOutputFormatRejectsInvalid(t *testing.T) {
 	if _, err := parseDrainOutputFormat("yaml"); err == nil {
 		t.Fatal("expected invalid output format error")
 	}
+}
+
+type recordingDrainRunLock struct {
+	released          bool
+	releaseContextErr error
+}
+
+func (l *recordingDrainRunLock) Release(ctx context.Context) error {
+	l.released = true
+	l.releaseContextErr = ctx.Err()
+	return nil
 }
 
 func restoreCommandEnv(t *testing.T) {

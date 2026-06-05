@@ -274,11 +274,13 @@ func acquireLocalDrainRunLock(clusterName string, nodepoolName string) (*localDr
 	return &localDrainRunLock{file: lockFile}, nil
 }
 
-func releaseDrainRunLock(ctx context.Context, lock drainRunLock) {
+func releaseDrainRunLock(_ context.Context, lock drainRunLock) {
 	if lock == nil {
 		return
 	}
-	if err := lock.Release(ctx); err != nil {
+	releaseCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := lock.Release(releaseCtx); err != nil {
 		slog.Warn("드레인 lock 해제 실패", "error", err)
 	}
 }
