@@ -94,7 +94,7 @@ var drainCmd = &cobra.Command{
 		}
 
 		if !drainDryRun {
-			lock, err := acquireDrainRunLock(ctx, clientSet, clusterName, nodepoolName, drainLockMode, drainLockNamespace, drainLockLeaseDuration)
+			lock, err := acquireDrainRunLockFromEnv(ctx, clientSet, drainLockMode, drainLockNamespace, drainLockLeaseDuration)
 			if err != nil {
 				slog.Error("드레인 중복 실행 차단", "error", err)
 				return err
@@ -333,6 +333,12 @@ func acquireLocalDrainRunLock(clusterName string, nodepoolName string) (*localDr
 	}
 
 	return &localDrainRunLock{file: lockFile}, nil
+}
+
+func acquireDrainRunLockFromEnv(ctx context.Context, clientSet kubernetes.Interface, mode string, namespace string, leaseDuration string) (drainRunLock, error) {
+	cluster := strings.TrimSpace(os.Getenv("CLUSTER_NAME"))
+	nodepool := strings.TrimSpace(os.Getenv("NODEPOOL_NAME"))
+	return acquireDrainRunLock(ctx, clientSet, cluster, nodepool, mode, namespace, leaseDuration)
 }
 
 func releaseDrainRunLock(_ context.Context, lock drainRunLock) {

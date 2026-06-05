@@ -168,6 +168,36 @@ func TestAcquireDrainRunLockAllowsDifferentNodepool(t *testing.T) {
 	defer releaseDrainRunLock(context.Background(), otherLockFile)
 }
 
+func TestAcquireDrainRunLockFromEnvUsesEffectiveEnvTarget(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	clusterName = ""
+	nodepoolName = ""
+	t.Setenv("CLUSTER_NAME", "env-cluster")
+	t.Setenv("NODEPOOL_NAME", "env-nodepool")
+
+	ctx := context.Background()
+	clientSet := fake.NewSimpleClientset()
+
+	lock, err := acquireDrainRunLockFromEnv(ctx, clientSet, "kubernetes", "default", "10m")
+	if err != nil {
+		t.Fatalf("acquireDrainRunLockFromEnv failed: %v", err)
+	}
+	defer releaseDrainRunLock(ctx, lock)
+
+	leaseName := kubernetesDrainLockLeaseName("env-cluster", "env-nodepool")
+	if _, err = clientSet.CoordinationV1().Leases("default").Get(ctx, leaseName, metaV1.GetOptions{}); err != nil {
+		t.Fatalf("expected env-target lease to exist: %v", err)
+	}
+
+	wrongLeaseName := kubernetesDrainLockLeaseName("", "")
+	if _, err = clientSet.CoordinationV1().Leases("default").Get(ctx, wrongLeaseName, metaV1.GetOptions{}); err == nil {
+		t.Fatalf("did not expect lock to use empty global target lease %s", wrongLeaseName)
+	}
+}
+
 func TestLocalDrainRunLockReleaseIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	lockFile, err := acquireLocalDrainRunLock("test-cluster", "test-idempotent-nodepool")
