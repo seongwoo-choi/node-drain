@@ -227,6 +227,62 @@ func TestNodeDrainWithReportSkipsMetricsForEmptyNodepool(t *testing.T) {
 	}
 }
 
+func TestNodeDrainWithReportAllowsEmptyNodepoolWithoutAllocateProvider(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "0")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "true")
+
+	clientSet := fake.NewSimpleClientset()
+
+	report, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: "empty-nodepool",
+		Eviction:     testEvictionConfig(),
+	})
+	if err != nil {
+		t.Fatalf("NodeDrainWithReport 실패: %v", err)
+	}
+	if len(report.Results) != 0 {
+		t.Fatalf("빈 노드풀 결과 개수 불일치: got=%d want=0", len(report.Results))
+	}
+	if report.Summary.TotalNodesInNodepool != 0 {
+		t.Fatalf("total node count 불일치: got=%d want=0", report.Summary.TotalNodesInNodepool)
+	}
+	if report.Summary.PlannedDrainNodeCount != 0 {
+		t.Fatalf("planned drain count 불일치: got=%d want=0", report.Summary.PlannedDrainNodeCount)
+	}
+}
+
+func TestNodeDrainWithReportRequiresAllocateProviderWhenNodepoolHasNodes(t *testing.T) {
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	node := newNode(nodepoolName, 1)
+	if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("노드 생성 실패: %v", err)
+	}
+
+	_, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     testEvictionConfig(),
+	})
+	if err == nil {
+		t.Fatal("expected allocate provider error, got nil")
+	}
+	if !strings.Contains(err.Error(), "allocate rate provider is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestNodeDrainProgressiveDoesNotPreCordonRemainingNodes(t *testing.T) {
 	t.Setenv("DRAIN_POLICY", "formula")
 	t.Setenv("DRAIN_ROUNDING", "floor")

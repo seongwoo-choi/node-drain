@@ -74,9 +74,6 @@ func NodeDrainWithReport(ctx context.Context, clientSet kubernetes.Interface, de
 	}
 	report.Summary.TargetNodepool = cfg.NodepoolName
 	report.Summary.DryRun = cfg.DryRun
-	if deps.AllocateRateProvider == nil {
-		return report, fmt.Errorf("allocate rate provider is required")
-	}
 	if _, err := parseNodeSelectionStrategy(cfg.NodeSelectionStrategy); err != nil {
 		return report, err
 	}
@@ -86,6 +83,10 @@ func NodeDrainWithReport(ctx context.Context, clientSet kubernetes.Interface, de
 		return report, err
 	}
 	report.Summary.TotalNodesInNodepool = len(nodepoolNodes)
+
+	if len(nodepoolNodes) > 0 && deps.AllocateRateProvider == nil {
+		return report, fmt.Errorf("allocate rate provider is required")
+	}
 
 	drainNodeCount, err := getDrainNodeCount(ctx, deps, len(nodepoolNodes))
 	if err != nil {
