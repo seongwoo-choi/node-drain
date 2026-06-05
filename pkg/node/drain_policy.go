@@ -389,8 +389,8 @@ func applyCaps(lenNodes int, base int, opts DrainPolicyOptions) int {
 	capValue := lenNodes
 
 	if opts.MaxDrainFraction > 0 {
-		// "최대 X%"는 ceil로 계산해 작은 클러스터에서도 정책이 의미 있게 동작하도록
-		fCap := int(math.Ceil(float64(lenNodes) * opts.MaxDrainFraction))
+		// "최대 X%"는 상한이므로 올림하지 않는다. 최종 상한은 MinDrain보다 우선한다.
+		fCap := int(math.Floor(float64(lenNodes) * opts.MaxDrainFraction))
 		if fCap < 0 {
 			fCap = 0
 		}

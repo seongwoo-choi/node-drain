@@ -215,6 +215,8 @@ go run main.go drain \
   --drain-max-fraction 0.2
 ```
 
+`--drain-max-fraction`은 상한이므로 소수점은 내림으로 계산합니다. 예를 들어 8대 NodePool에서 `0.2`는 최대 1대입니다. 최소 1대 보정은 `--drain-min 1`이 담당하지만, 최종 상한보다 우선하지는 않습니다.
+
 ##### 예시 2) 계단식 정책(예측 가능한 정책)
 
 ```sh

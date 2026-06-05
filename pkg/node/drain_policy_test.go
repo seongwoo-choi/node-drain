@@ -95,11 +95,22 @@ func TestCalculateDrainNodeCount_Caps(t *testing.T) {
 		Rounding:         DrainRoundingCeil,
 		MinDrain:         1,
 		MaxDrainAbsolute: 2,
-		MaxDrainFraction: 0.2, // 8대면 ceil(1.6)=2
+		MaxDrainFraction: 0.2, // 8대면 floor(1.6)=1
 	}
 
-	// max=20 => drainRate=0.79 => raw=6.32 => ceil=7, min=1 => 7, capAbs=2/capFrac=2 => 2
-	assert.Equal(t, 2, CalculateDrainNodeCount(8, 20, opts))
+	// max=20 => drainRate=0.79 => raw=6.32 => ceil=7, min=1 => 7, capAbs=2/capFrac=1 => 1
+	assert.Equal(t, 1, CalculateDrainNodeCount(8, 20, opts))
+}
+
+func TestCalculateDrainNodeCount_MaxFractionCapDoesNotRoundUp(t *testing.T) {
+	opts := DrainPolicyOptions{
+		Policy:           DrainPolicyFormula,
+		Rounding:         DrainRoundingCeil,
+		MinDrain:         0,
+		MaxDrainFraction: 0.01,
+	}
+
+	assert.Equal(t, 0, CalculateDrainNodeCount(23, 20, opts))
 }
 
 func TestCalculateDrainNodeCount_StepPolicy(t *testing.T) {
