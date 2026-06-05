@@ -547,6 +547,7 @@ func newKubernetesLeaseLock(clientSet kubernetes.Interface, namespace string, na
 
 func (l *kubernetesLeaseLock) startRenewal(duration time.Duration) {
 	interval := kubernetesLeaseRenewalInterval(duration)
+	timeout := kubernetesLeaseRenewalRequestTimeout(duration)
 
 	go func() {
 		defer close(l.done)
@@ -557,7 +558,10 @@ func (l *kubernetesLeaseLock) startRenewal(duration time.Duration) {
 			case <-l.stop:
 				return
 			case <-ticker.C:
-				if err := l.renew(context.Background(), duration); err != nil {
+				renewCtx, cancel := context.WithTimeout(context.Background(), timeout)
+				err := l.renew(renewCtx, duration)
+				cancel()
+				if err != nil {
 					slog.Warn("drain lease 갱신 실패", "namespace", l.namespace, "name", l.name, "error", err)
 				}
 			}
@@ -580,6 +584,17 @@ func kubernetesLeaseRenewalInterval(duration time.Duration) time.Duration {
 		return interval
 	}
 	return 10 * time.Second
+}
+
+func kubernetesLeaseRenewalRequestTimeout(duration time.Duration) time.Duration {
+	timeout := kubernetesLeaseRenewalInterval(duration)
+	if timeout <= 0 {
+		return time.Second
+	}
+	if timeout > 10*time.Second {
+		return 10 * time.Second
+	}
+	return timeout
 }
 
 func (l *kubernetesLeaseLock) renew(ctx context.Context, duration time.Duration) error {

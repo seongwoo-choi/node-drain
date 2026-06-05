@@ -443,6 +443,23 @@ func TestKubernetesLeaseRenewalIntervalCapsLongLeaseDuration(t *testing.T) {
 	}
 }
 
+func TestKubernetesLeaseRenewalRequestTimeoutStaysBelowShortLeaseDuration(t *testing.T) {
+	timeout := kubernetesLeaseRenewalRequestTimeout(5 * time.Second)
+	if timeout >= 5*time.Second {
+		t.Fatalf("renewal timeout = %s, want less than lease duration", timeout)
+	}
+	if timeout != kubernetesLeaseRenewalInterval(5*time.Second) {
+		t.Fatalf("renewal timeout = %s, want interval %s", timeout, kubernetesLeaseRenewalInterval(5*time.Second))
+	}
+}
+
+func TestKubernetesLeaseRenewalRequestTimeoutCapsLongLeaseDuration(t *testing.T) {
+	timeout := kubernetesLeaseRenewalRequestTimeout(10 * time.Minute)
+	if timeout != 10*time.Second {
+		t.Fatalf("renewal timeout = %s, want 10s", timeout)
+	}
+}
+
 func TestWriteNodeDrainReportJSON(t *testing.T) {
 	var buf bytes.Buffer
 	report := types.NodeDrainReport{
