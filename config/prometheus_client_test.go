@@ -31,6 +31,16 @@ func TestValidatePrometheusAddress(t *testing.T) {
 			wantErr: "base URL",
 		},
 		{
+			name:    "prefixed api root endpoint",
+			address: "http://localhost:8080/prometheus/api/v1",
+			wantErr: "base URL",
+		},
+		{
+			name:    "prefixed api root endpoint with trailing slash",
+			address: "http://localhost:8080/prometheus/api/v1/",
+			wantErr: "base URL",
+		},
+		{
 			name:    "api root endpoint",
 			address: "http://localhost:8080/api/v1",
 			wantErr: "base URL",

@@ -68,7 +68,7 @@ func ValidatePrometheusAddress(address string) error {
 	}
 
 	path := strings.TrimRight(parsed.EscapedPath(), "/")
-	if path == "/api/v1" || strings.Contains(path, "/api/v1/") {
+	if path == "/api/v1" || strings.HasSuffix(path, "/api/v1") || strings.Contains(path, "/api/v1/") {
 		return errors.New("invalid PROMETHEUS_ADDRESS: use the Prometheus base URL, not an /api/v1 endpoint")
 	}
 	return nil
