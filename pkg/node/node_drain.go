@@ -522,22 +522,33 @@ func waitForPodsToTerminate(ctx context.Context, clientSet kubernetes.Interface,
 	ticker := time.NewTicker(cfg.NodeTerminationCheckTick)
 	defer ticker.Stop()
 
+	if done, err := nonCriticalPodsTerminated(waitCtx, clientSet, nodeName); done || err != nil {
+		return err
+	}
+
 	for {
 		select {
 		case <-waitCtx.Done():
 			return fmt.Errorf("노드 %s 파드 종료 대기 타임아웃: %w", nodeName, waitCtx.Err())
 		case <-ticker.C:
-			pods, err := pod.GetNonCriticalPods(waitCtx, clientSet, nodeName)
-			if err != nil {
-				return fmt.Errorf("노드 %s 파드 조회 실패: %w", nodeName, err)
+			if done, err := nonCriticalPodsTerminated(waitCtx, clientSet, nodeName); done || err != nil {
+				return err
 			}
-			if len(pods) == 0 {
-				slog.Info("데몬셋 제외 모든 Pod 종료 완료", "nodeName", nodeName)
-				return nil
-			}
-			slog.Info("Pod 종료 대기 중", "nodeName", nodeName, "remainingPods", len(pods))
 		}
 	}
+}
+
+func nonCriticalPodsTerminated(ctx context.Context, clientSet kubernetes.Interface, nodeName string) (bool, error) {
+	pods, err := pod.GetNonCriticalPods(ctx, clientSet, nodeName)
+	if err != nil {
+		return false, fmt.Errorf("노드 %s 파드 조회 실패: %w", nodeName, err)
+	}
+	if len(pods) == 0 {
+		slog.Info("데몬셋 제외 모든 Pod 종료 완료", "nodeName", nodeName)
+		return true, nil
+	}
+	slog.Info("Pod 종료 대기 중", "nodeName", nodeName, "remainingPods", len(pods))
+	return false, nil
 }
 
 func normalizeDrainEvictionConfig(cfg *pod.EvictionConfig) *pod.EvictionConfig {

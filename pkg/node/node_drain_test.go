@@ -516,6 +516,24 @@ func TestNodeDrainWithReportSummarizesActualPodEviction(t *testing.T) {
 	}
 }
 
+func TestWaitForPodsToTerminateReturnsImmediatelyWhenNoPodsRemain(t *testing.T) {
+	clientSet := fake.NewSimpleClientset()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	cfg := testEvictionConfig()
+	cfg.NodeTerminationTimeout = time.Second
+	cfg.NodeTerminationCheckTick = time.Hour
+
+	start := time.Now()
+	if err := waitForPodsToTerminate(ctx, clientSet, "node-empty", cfg); err != nil {
+		t.Fatalf("waitForPodsToTerminate failed: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed >= 100*time.Millisecond {
+		t.Fatalf("waitForPodsToTerminate took %s, expected immediate return before context timeout", elapsed)
+	}
+}
+
 func TestNodeDrainCanSkipUnschedulableNodes(t *testing.T) {
 	t.Setenv("DRAIN_POLICY", "formula")
 	t.Setenv("DRAIN_ROUNDING", "floor")
