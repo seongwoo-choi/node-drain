@@ -81,8 +81,8 @@ func TestNewKarpenterClientFromEnvScopesClusterWhenProvided(t *testing.T) {
 	defer restore()
 	restoreCommandEnv(t)
 
-	t.Setenv("NODEPOOL_NAME", "test-nodepool")
-	t.Setenv("CLUSTER_NAME", "test-cluster")
+	t.Setenv("NODEPOOL_NAME", " test-nodepool ")
+	t.Setenv("CLUSTER_NAME", " test-cluster ")
 
 	querier := &cmdRecordingMetricsQuerier{}
 	client := newKarpenterClientFromEnv(querier)

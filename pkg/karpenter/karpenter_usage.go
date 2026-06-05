@@ -83,7 +83,7 @@ func NewClient(nodepoolName string, querier MetricsQuerier) *Client {
 // NewClientForCluster creates a Karpenter metrics client scoped to a cluster when provided.
 func NewClientForCluster(nodepoolName string, clusterName string, querier MetricsQuerier) *Client {
 	return &Client{
-		nodepoolName: nodepoolName,
+		nodepoolName: strings.TrimSpace(nodepoolName),
 		clusterName:  strings.TrimSpace(clusterName),
 		querier:      querier,
 	}

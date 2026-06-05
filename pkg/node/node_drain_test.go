@@ -195,6 +195,52 @@ func TestNodeDrainWithReportRejectsNilKubernetesClient(t *testing.T) {
 	}
 }
 
+func TestNodeDrainWithReportTrimsNodepoolName(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "ceil")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "true")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	node := newNode(nodepoolName, 1)
+	if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("노드 생성 실패: %v", err)
+	}
+
+	report, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: fakeAllocateRateProvider{
+			rates: map[string]int{
+				"memory": 30,
+				"cpu":    30,
+			},
+		},
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: " " + nodepoolName + " ",
+		Eviction:     testEvictionConfig(),
+		DryRun:       true,
+	})
+	if err != nil {
+		t.Fatalf("NodeDrainWithReport 실패: %v", err)
+	}
+	if report.Summary.TargetNodepool != nodepoolName {
+		t.Fatalf("target nodepool 불일치: got=%q want=%q", report.Summary.TargetNodepool, nodepoolName)
+	}
+	if len(report.Results) != 1 {
+		t.Fatalf("drain 결과 개수 불일치: got=%d want=1", len(report.Results))
+	}
+	if report.Results[0].NodepoolName != nodepoolName {
+		t.Fatalf("result nodepool 불일치: got=%q want=%q", report.Results[0].NodepoolName, nodepoolName)
+	}
+}
+
 func TestNodeDrainWithReportSkipsMetricsForEmptyNodepool(t *testing.T) {
 	t.Setenv("DRAIN_POLICY", "formula")
 	t.Setenv("DRAIN_ROUNDING", "floor")

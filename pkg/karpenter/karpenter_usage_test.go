@@ -108,6 +108,36 @@ func TestGetKarpenterNodepoolUsageQueriesSingleAggregatedSeries(t *testing.T) {
 	}
 }
 
+func TestNewClientForClusterTrimsLabelMatchers(t *testing.T) {
+	querier := &recordingMetricsQuerier{}
+	client := NewClientForCluster(" nodepool-a ", " cluster-a ", querier)
+
+	_, err := client.GetKarpenterNodepoolUsage(context.Background(), "memory")
+	if err != nil {
+		t.Fatalf("GetKarpenterNodepoolUsage() error = %v", err)
+	}
+	if len(querier.queries) != 1 {
+		t.Fatalf("query count = %d, want=1", len(querier.queries))
+	}
+	query := querier.queries[0]
+	for _, want := range []string{
+		`nodepool="nodepool-a"`,
+		`cluster="cluster-a"`,
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("query missing %q: %s", want, query)
+		}
+	}
+	for _, unexpected := range []string{
+		`nodepool=" nodepool-a "`,
+		`cluster=" cluster-a "`,
+	} {
+		if strings.Contains(query, unexpected) {
+			t.Fatalf("query contains untrimmed matcher %q: %s", unexpected, query)
+		}
+	}
+}
+
 func TestGetKarpenterPodRequestDeduplicatesScrapeTargets(t *testing.T) {
 	querier := &recordingMetricsQuerier{}
 	client := NewClientForCluster("nodepool-a", "cluster-a", querier)

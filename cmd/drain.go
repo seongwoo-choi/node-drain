@@ -124,7 +124,7 @@ func handleNodeDrain(ctx context.Context, clientSet kubernetes.Interface) error 
 		return fmt.Errorf("Prometheus 클라이언트 생성 실패: %w", err)
 	}
 
-	nodepool := os.Getenv("NODEPOOL_NAME")
+	nodepool := strings.TrimSpace(os.Getenv("NODEPOOL_NAME"))
 	metricsQuerier := karpenter.NewPrometheusQuerier(prometheusClient)
 	karpenterClient := newKarpenterClientFromEnv(metricsQuerier)
 	notifier := notification.NewSlackNotifier(notification.SlackConfig{

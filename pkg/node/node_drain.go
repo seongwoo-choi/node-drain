@@ -69,6 +69,7 @@ func NodeDrainWithReport(ctx context.Context, clientSet kubernetes.Interface, de
 		ctx = context.Background()
 	}
 	cfg.Eviction = normalizeDrainEvictionConfig(cfg.Eviction)
+	cfg.NodepoolName = strings.TrimSpace(cfg.NodepoolName)
 	if cfg.NodepoolName == "" {
 		return report, fmt.Errorf("nodepool name is required")
 	}
