@@ -171,7 +171,7 @@ go run main.go drain \
 | `--dry-run` | `false` | 실제 cordon/evict 없이 드레인 대상 노드와 제거 대상 pod만 계산 |
 | `--drain-lock-mode` | `local` | 중복 실행 lock 방식: `local`, `kubernetes`, `none` |
 | `--drain-lock-namespace` | `kube-system` | `kubernetes` lock 모드에서 Lease를 저장할 namespace |
-| `--drain-lock-lease-duration` | `10m` | `kubernetes` lock Lease 만료 시간. 실행 중 주기적으로 갱신됨 |
+| `--drain-lock-lease-duration` | `10m` | `kubernetes` lock Lease 만료 시간. 실행 중 주기적으로 갱신됨. 최소 `1s` |
 | `--drain-node-selection` | `oldest` | 드레인 대상 노드 선택 전략: `oldest`, `empty-first`, `least-pods`, `most-pods` |
 | `--drain-skip-unschedulable` | `false` | 이미 cordon된 노드를 새 드레인 대상으로 선택하지 않음 |
 | `--output` | `text` | 결과 출력 형식. `json`을 지정하면 `results`와 `summary`를 stdout으로 출력 |

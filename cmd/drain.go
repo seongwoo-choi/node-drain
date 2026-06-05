@@ -236,10 +236,20 @@ func validateDrainCommandConfig() error {
 	if err := validateDrainLockMode(drainLockMode); err != nil {
 		return err
 	}
-	if err := validatePositiveDurationString("drain-lock-lease-duration", drainLockLeaseDuration); err != nil {
-		return err
+	if normalizeDrainLockMode(drainLockMode) == "kubernetes" {
+		if err := validateDurationAtLeastString("drain-lock-lease-duration", drainLockLeaseDuration, time.Second); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func normalizeDrainLockMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return "local"
+	}
+	return mode
 }
 
 func validateDrainNodeSelectionStrategy(strategy string) error {
@@ -252,23 +262,34 @@ func validateDrainNodeSelectionStrategy(strategy string) error {
 }
 
 func validateDrainLockMode(mode string) error {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "", "local", "kubernetes", "none":
+	switch normalizeDrainLockMode(mode) {
+	case "local", "kubernetes", "none":
 		return nil
 	default:
 		return fmt.Errorf("지원하지 않는 drain-lock-mode: %s", mode)
 	}
 }
 
-func validatePositiveDurationString(flagName string, value string) error {
+func validateDurationAtLeastString(flagName string, value string, min time.Duration) error {
 	duration, err := time.ParseDuration(strings.TrimSpace(value))
 	if err != nil {
 		return fmt.Errorf("invalid %s: %w", flagName, err)
 	}
-	if duration <= 0 {
-		return fmt.Errorf("invalid %s: must be greater than 0", flagName)
+	if duration < min {
+		return fmt.Errorf("invalid %s: must be at least %s", flagName, min)
 	}
 	return nil
+}
+
+func parseDrainLockLeaseDuration(leaseDuration string) (time.Duration, error) {
+	duration, err := time.ParseDuration(strings.TrimSpace(leaseDuration))
+	if err != nil {
+		return 0, fmt.Errorf("invalid drain lock lease duration: %s", leaseDuration)
+	}
+	if duration < time.Second {
+		return 0, fmt.Errorf("invalid drain lock lease duration: must be at least 1s")
+	}
+	return duration, nil
 }
 
 func parseDrainOutputFormat(format string) (string, error) {
@@ -490,9 +511,9 @@ func acquireKubernetesDrainRunLock(ctx context.Context, clientSet kubernetes.Int
 		namespace = "kube-system"
 	}
 
-	duration, err := time.ParseDuration(strings.TrimSpace(leaseDuration))
-	if err != nil || duration <= 0 {
-		return nil, fmt.Errorf("invalid drain lock lease duration: %s", leaseDuration)
+	duration, err := parseDrainLockLeaseDuration(leaseDuration)
+	if err != nil {
+		return nil, err
 	}
 
 	durationSeconds := int32(duration.Seconds())

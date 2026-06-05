@@ -158,6 +158,43 @@ func TestDrainCommandRejectsInvalidPodEnvBeforeKubeClient(t *testing.T) {
 	}
 }
 
+func TestValidateDrainCommandConfigIgnoresLeaseDurationOutsideKubernetesLock(t *testing.T) {
+	for _, mode := range []string{"local", "none"} {
+		mode := mode
+		t.Run(mode, func(t *testing.T) {
+			restore := snapshotCommandGlobals()
+			defer restore()
+			restoreCommandEnv(t)
+			configureDrainCommandForValidationTest(t)
+
+			drainLockMode = mode
+			drainLockLeaseDuration = "not-a-duration"
+
+			if err := validateDrainCommandConfig(); err != nil {
+				t.Fatalf("validateDrainCommandConfig() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateDrainCommandConfigRejectsSubsecondKubernetesLeaseDuration(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+	configureDrainCommandForValidationTest(t)
+
+	drainLockMode = "kubernetes"
+	drainLockLeaseDuration = "500ms"
+
+	err := validateDrainCommandConfig()
+	if err == nil {
+		t.Fatal("expected subsecond lease duration error")
+	}
+	if !strings.Contains(err.Error(), "drain-lock-lease-duration") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestAcquireDrainRunLockBlocksDuplicate(t *testing.T) {
 	lockFile, err := acquireLocalDrainRunLock("test-cluster", "test-nodepool")
 	if err != nil {
@@ -406,6 +443,20 @@ func TestAcquireKubernetesDrainRunLockBlocksDuplicate(t *testing.T) {
 		t.Fatal("expected duplicate kubernetes lock error, got nil")
 	}
 	if !strings.Contains(err.Error(), "이미 동일 cluster/nodepool 드레인이 실행 중입니다") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAcquireKubernetesDrainRunLockRejectsSubsecondLeaseDuration(t *testing.T) {
+	ctx := context.Background()
+	clientSet := fake.NewSimpleClientset()
+
+	lock, err := acquireDrainRunLock(ctx, clientSet, "test-cluster", "test-nodepool", "kubernetes", "default", "500ms")
+	if err == nil {
+		releaseDrainRunLock(ctx, lock)
+		t.Fatal("expected subsecond kubernetes lease duration error")
+	}
+	if !strings.Contains(err.Error(), "at least 1s") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
