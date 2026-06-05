@@ -149,7 +149,7 @@ func getDrainNodeCount(ctx context.Context, deps DrainDependencies, lenNodes int
 	slog.Info("최대 사용률", "maxAllocateRate", maxAllocateRate)
 
 	opts := GetDrainPolicyOptionsFromEnv()
-	blocked, reason, safetyErr := ShouldBlockDrainBySafetyConditions(maxAllocateRate, opts)
+	blocked, reason, safetyErr := ShouldBlockDrainBySafetyConditionsWithContext(ctx, maxAllocateRate, opts)
 	if safetyErr != nil {
 		slog.Warn("드레인 안전 조건 평가 중 오류", "error", safetyErr, "blocked", blocked, "reason", reason)
 	}
@@ -349,7 +349,7 @@ func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []co
 			}
 
 			maxRate := int(math.Max(float64(memoryAllocateRate), float64(cpuAllocateRate)))
-			blocked, reason, safetyErr := ShouldBlockDrainBySafetyConditions(maxRate, opts)
+			blocked, reason, safetyErr := ShouldBlockDrainBySafetyConditionsWithContext(ctx, maxRate, opts)
 			if safetyErr != nil {
 				slog.Warn("안전 재평가 중 오류", "error", safetyErr, "blocked", blocked, "reason", reason)
 			}

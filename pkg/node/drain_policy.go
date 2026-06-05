@@ -2,6 +2,7 @@ package node
 
 import (
 	"app/config"
+	"context"
 	"fmt"
 	"log/slog"
 	"math"
@@ -260,6 +261,10 @@ func parseStepRules(s string) ([]StepRule, error) {
 
 // ShouldBlockDrainBySafetyConditions는 안전 조건에 의해 0대 드레인을 강제해야 하는지 판단합니다.
 func ShouldBlockDrainBySafetyConditions(maxAllocateRate int, opts DrainPolicyOptions) (bool, string, error) {
+	return ShouldBlockDrainBySafetyConditionsWithContext(context.Background(), maxAllocateRate, opts)
+}
+
+func ShouldBlockDrainBySafetyConditionsWithContext(ctx context.Context, maxAllocateRate int, opts DrainPolicyOptions) (bool, string, error) {
 	if opts.SafetyMaxAllocateRate > 0 && maxAllocateRate >= opts.SafetyMaxAllocateRate {
 		return true, fmt.Sprintf("maxAllocateRate(%d) >= safetyMaxAllocateRate(%d)", maxAllocateRate, opts.SafetyMaxAllocateRate), nil
 	}
@@ -277,7 +282,7 @@ func ShouldBlockDrainBySafetyConditions(maxAllocateRate int, opts DrainPolicyOpt
 	}
 
 	for _, q := range opts.SafetyQueries {
-		vec, qErr := config.QueryPrometheus(promClient, q)
+		vec, qErr := config.QueryPrometheusWithContext(ctx, promClient, q)
 		if qErr != nil {
 			if opts.SafetyFailClosed {
 				return true, fmt.Sprintf("safety query failed (fail-closed): %s", q), qErr

@@ -43,8 +43,15 @@ func CreatePrometheusClient() (api.Client, error) {
 }
 
 func QueryPrometheus(client api.Client, query string) (model.Vector, error) {
+	return QueryPrometheusWithContext(context.Background(), client, query)
+}
+
+func QueryPrometheusWithContext(ctx context.Context, client api.Client, query string) (model.Vector, error) {
 	v1api := v1.NewAPI(client)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	result, warnings, err := v1api.Query(ctx, query, time.Now())
