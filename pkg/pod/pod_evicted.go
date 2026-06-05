@@ -288,7 +288,10 @@ func evictPodWithRetry(ctx context.Context, clientSet kubernetes.Interface, pod 
 			if keyErr != nil {
 				slog.Warn("PDB 키 계산 실패(토큰 미적용)", "pod", pod.Name, "error", keyErr)
 			} else {
-				release := acquirePDBTokens(pdbKeys, cfg.PDBTokenMaxInFlight)
+				release, tokenErr := acquirePDBTokens(ctx, pdbKeys, cfg.PDBTokenMaxInFlight)
+				if tokenErr != nil {
+					return lastOutcome, fmt.Errorf("PDB 토큰 획득 실패: %w", tokenErr)
+				}
 				defer release()
 			}
 		}

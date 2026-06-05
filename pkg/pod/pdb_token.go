@@ -1,6 +1,7 @@
 package pod
 
 import (
+	"context"
 	"sort"
 	"sync"
 )
@@ -30,9 +31,12 @@ func (m *pdbTokenManager) getOrCreate(key string, maxInFlight int) chan struct{}
 
 // acquirePDBTokens는 여러 PDB 키에 대한 토큰을 고정 순서로 획득해 deadlock을 방지합니다.
 // 반환되는 release 함수를 반드시 호출해야 합니다.
-func acquirePDBTokens(keys []string, maxInFlight int) func() {
+func acquirePDBTokens(ctx context.Context, keys []string, maxInFlight int) (func(), error) {
 	if len(keys) == 0 {
-		return func() {}
+		return func() {}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	keysCopy := append([]string(nil), keys...)
@@ -41,13 +45,22 @@ func acquirePDBTokens(keys []string, maxInFlight int) func() {
 	var acquired []chan struct{}
 	for _, k := range keysCopy {
 		sem := globalPDBTokenManager.getOrCreate(k, maxInFlight)
-		sem <- struct{}{}
-		acquired = append(acquired, sem)
+		select {
+		case sem <- struct{}{}:
+			acquired = append(acquired, sem)
+		case <-ctx.Done():
+			releasePDBTokenChannels(acquired)
+			return func() {}, ctx.Err()
+		}
 	}
 
 	return func() {
-		for i := len(acquired) - 1; i >= 0; i-- {
-			<-acquired[i]
-		}
+		releasePDBTokenChannels(acquired)
+	}, nil
+}
+
+func releasePDBTokenChannels(acquired []chan struct{}) {
+	for i := len(acquired) - 1; i >= 0; i-- {
+		<-acquired[i]
 	}
 }
