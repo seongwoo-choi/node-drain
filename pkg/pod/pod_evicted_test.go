@@ -94,6 +94,16 @@ func TestEvictPodsWithReportCountsEvictionAndCompatibilityDelete(t *testing.T) {
 	assert.Equal(t, 0, report.PDBBlockedPods)
 }
 
+func TestEvictPodsWithReportRejectsNilKubernetesClient(t *testing.T) {
+	_, err := EvictPodsWithReport(context.Background(), nil, "node-1", evictionConfigWithDeleteAfterEvictionForTest())
+	if err == nil {
+		t.Fatal("expected nil kubernetes client error")
+	}
+	if !strings.Contains(err.Error(), "kubernetes client is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestEvictPodsWithReportKeepsPartialOutcomeOnDeletionTimeout(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	pod := &coreV1.Pod{
@@ -792,6 +802,16 @@ func TestGetNonCriticalPods(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(pods))
 	assert.Equal(t, "normal-pod", pods[0].Name)
+}
+
+func TestGetNonCriticalPodsRejectsNilKubernetesClient(t *testing.T) {
+	_, err := GetNonCriticalPods(context.Background(), nil, "test-node")
+	if err == nil {
+		t.Fatal("expected nil kubernetes client error")
+	}
+	if !strings.Contains(err.Error(), "kubernetes client is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
 func TestEvictPodWithRetry(t *testing.T) {

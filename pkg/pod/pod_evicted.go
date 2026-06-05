@@ -626,6 +626,13 @@ func isRateLimitError(err error) bool {
 
 // GetNonCriticalPods lists pods on a node excluding daemonset and completed/failed pods.
 func GetNonCriticalPods(ctx context.Context, clientSet kubernetes.Interface, nodeName string) ([]coreV1.Pod, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if clientSet == nil {
+		return nil, fmt.Errorf("kubernetes client is required")
+	}
+
 	podList, err := clientSet.CoreV1().Pods("").List(ctx, metaV1.ListOptions{
 		FieldSelector: fmt.Sprintf("spec.nodeName=%s,status.phase!=Succeeded,status.phase!=Failed", nodeName),
 	})
