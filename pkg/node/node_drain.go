@@ -127,6 +127,11 @@ func getDrainNodeCount(ctx context.Context, deps DrainDependencies, lenNodes int
 		}
 	}
 
+	if lenNodes == 0 {
+		slog.Info("노드풀이 비어 있어 드레인을 수행하지 않습니다.")
+		return 0, nil
+	}
+
 	memoryAllocateRate, err := deps.AllocateRateProvider.GetAllocateRate(ctx, "memory")
 	if err != nil {
 		return 0, err
@@ -277,6 +282,10 @@ func sortNodesByPodCount(ctx context.Context, clientSet kubernetes.Interface, no
 
 func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []coreV1.Node, deps DrainDependencies, cfg DrainConfig, summary *types.NodeDrainSummary) ([]types.NodeDrainResult, error) {
 	results := make([]types.NodeDrainResult, 0, len(nodes))
+	if len(nodes) == 0 {
+		return results, nil
+	}
+
 	opts := GetDrainPolicyOptionsFromEnv()
 	progressive := parseEnvBool("DRAIN_PROGRESSIVE", true)
 	shouldSafetyRecheck := progressive && (opts.SafetyMaxAllocateRate > 0 || len(opts.SafetyQueries) > 0)

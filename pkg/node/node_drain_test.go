@@ -57,6 +57,15 @@ func (f *failOnSafetyRecheckAllocateRateProvider) GetAllocateRate(ctx context.Co
 	return 30, nil
 }
 
+type failingAllocateRateProvider struct {
+	calls int
+}
+
+func (f *failingAllocateRateProvider) GetAllocateRate(ctx context.Context, resourceType string) (int, error) {
+	f.calls++
+	return 0, fmt.Errorf("unexpected allocate rate lookup for %s", resourceType)
+}
+
 type fakeNotifier struct{}
 
 func (f fakeNotifier) SendNodeDrainComplete(ctx context.Context, results []types.NodeDrainResult) error {
@@ -170,6 +179,51 @@ func TestNodeDrainSelectsExpectedNodeCount(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNodeDrainWithReportSkipsMetricsForEmptyNodepool(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "0")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "90")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "true")
+
+	clientSet := fake.NewSimpleClientset()
+	provider := &failingAllocateRateProvider{}
+
+	report, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: provider,
+		Notifier:             fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: "empty-nodepool",
+		Eviction:     testEvictionConfig(),
+	})
+	if err != nil {
+		t.Fatalf("NodeDrainWithReport 실패: %v", err)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("빈 노드풀은 metric provider를 호출하면 안 됨: calls=%d", provider.calls)
+	}
+	if len(report.Results) != 0 {
+		t.Fatalf("빈 노드풀 결과 개수 불일치: got=%d want=0", len(report.Results))
+	}
+	if report.Summary.TotalNodesInNodepool != 0 {
+		t.Fatalf("total node count 불일치: got=%d want=0", report.Summary.TotalNodesInNodepool)
+	}
+	if report.Summary.PlannedDrainNodeCount != 0 {
+		t.Fatalf("planned drain count 불일치: got=%d want=0", report.Summary.PlannedDrainNodeCount)
+	}
+	if report.Summary.SelectedDrainNodeCount != 0 {
+		t.Fatalf("selected drain count 불일치: got=%d want=0", report.Summary.SelectedDrainNodeCount)
+	}
+	if report.Summary.TargetNodepool != "empty-nodepool" {
+		t.Fatalf("target nodepool 불일치: got=%s want=empty-nodepool", report.Summary.TargetNodepool)
 	}
 }
 
