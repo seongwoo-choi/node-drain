@@ -62,10 +62,52 @@ func TestAcquirePDBTokensReleasesPartialAcquisitionOnCancellation(t *testing.T) 
 	waitForPDBTokenCount(t, "a", 0)
 }
 
+func TestAcquirePDBTokensHonorsLowerLimitAfterHigherLimitAcquire(t *testing.T) {
+	resetPDBTokenManagerForTest()
+
+	releaseFirst, err := acquirePDBTokens(context.Background(), []string{"default/pdb-a"}, 2)
+	if err != nil {
+		t.Fatalf("initial acquirePDBTokens failed: %v", err)
+	}
+	defer releaseFirst()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	releaseSecond, err := acquirePDBTokens(ctx, []string{"default/pdb-a"}, 1)
+	if err == nil {
+		releaseSecond()
+		t.Fatal("expected lower maxInFlight to block while one token is already in flight")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+}
+
+func TestAcquirePDBTokensHonorsHigherLimitAfterLowerLimitAcquire(t *testing.T) {
+	resetPDBTokenManagerForTest()
+
+	releaseFirst, err := acquirePDBTokens(context.Background(), []string{"default/pdb-a"}, 1)
+	if err != nil {
+		t.Fatalf("initial acquirePDBTokens failed: %v", err)
+	}
+	defer releaseFirst()
+
+	releaseSecond, err := acquirePDBTokens(context.Background(), []string{"default/pdb-a"}, 2)
+	if err != nil {
+		t.Fatalf("higher maxInFlight should allow second acquisition: %v", err)
+	}
+	defer releaseSecond()
+
+	if got := pdbTokenCountForTest("default/pdb-a"); got != 2 {
+		t.Fatalf("PDB token count = %d, want=2", got)
+	}
+}
+
 func resetPDBTokenManagerForTest() {
 	globalPDBTokenManager.mu.Lock()
 	defer globalPDBTokenManager.mu.Unlock()
-	globalPDBTokenManager.sems = map[string]chan struct{}{}
+	globalPDBTokenManager.tokens = map[string]*pdbTokenState{}
 }
 
 func waitForPDBTokenCount(t *testing.T, key string, want int) {
@@ -84,9 +126,9 @@ func waitForPDBTokenCount(t *testing.T, key string, want int) {
 func pdbTokenCountForTest(key string) int {
 	globalPDBTokenManager.mu.Lock()
 	defer globalPDBTokenManager.mu.Unlock()
-	ch := globalPDBTokenManager.sems[key]
-	if ch == nil {
+	state := globalPDBTokenManager.tokens[key]
+	if state == nil {
 		return 0
 	}
-	return len(ch)
+	return state.inFlight
 }
