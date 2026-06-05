@@ -46,6 +46,9 @@ func NewPrometheusQuerier(client api.Client) *PrometheusQuerier {
 
 // Query executes a Prometheus instant query.
 func (p *PrometheusQuerier) Query(ctx context.Context, query string) (prometheusModel.Vector, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	queryCtx := ctx
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc

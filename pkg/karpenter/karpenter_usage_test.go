@@ -3,9 +3,12 @@ package karpenter
 import (
 	"context"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/api"
 	prometheusModel "github.com/prometheus/common/model"
 )
 
@@ -68,6 +71,30 @@ func vectorOfMany(values ...float64) prometheusModel.Vector {
 		})
 	}
 	return vector
+}
+
+func TestPrometheusQuerierAllowsNilContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1234.5,"1"]}]}}`))
+	}))
+	defer server.Close()
+
+	client, err := api.NewClient(api.Config{Address: server.URL})
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+
+	vector, err := NewPrometheusQuerier(client).Query(nil, "up")
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if len(vector) != 1 {
+		t.Fatalf("vector length = %d, want=1", len(vector))
+	}
+	if got := vector[0].Value.String(); got != "1" {
+		t.Fatalf("sample value = %s, want=1", got)
+	}
 }
 
 func TestGetKarpenterNodepoolUsageFallsBackToLegacyMetric(t *testing.T) {
