@@ -22,10 +22,22 @@ type headerRoundTripper struct {
 }
 
 func (h *headerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	for key, value := range h.headers {
-		req.Header.Add(key, value)
+	if req == nil {
+		return nil, errors.New("prometheus request is required")
 	}
-	return h.rt.RoundTrip(req)
+
+	rt := http.DefaultTransport
+	if h != nil && h.rt != nil {
+		rt = h.rt
+	}
+
+	if h != nil {
+		for key, value := range h.headers {
+			req.Header.Set(key, value)
+		}
+	}
+
+	return rt.RoundTrip(req)
 }
 
 func CreatePrometheusClient() (api.Client, error) {

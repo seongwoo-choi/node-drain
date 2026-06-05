@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,96 @@ import (
 
 	"github.com/prometheus/client_golang/api"
 )
+
+type configRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f configRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestHeaderRoundTripperRejectsNilRequest(t *testing.T) {
+	rt := &headerRoundTripper{}
+
+	_, err := rt.RoundTrip(nil)
+	if err == nil {
+		t.Fatal("expected nil request error")
+	}
+	if !strings.Contains(err.Error(), "prometheus request is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestHeaderRoundTripperUsesDefaultTransportWhenReceiverOrTransportNil(t *testing.T) {
+	tests := []struct {
+		name string
+		rt   *headerRoundTripper
+	}{
+		{
+			name: "nil receiver",
+			rt:   nil,
+		},
+		{
+			name: "nil transport",
+			rt:   &headerRoundTripper{},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer server.Close()
+
+			req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+			if err != nil {
+				t.Fatalf("NewRequest failed: %v", err)
+			}
+
+			resp, err := tt.rt.RoundTrip(req)
+			if err != nil {
+				t.Fatalf("RoundTrip failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusNoContent {
+				t.Fatalf("status = %d, want=%d", resp.StatusCode, http.StatusNoContent)
+			}
+		})
+	}
+}
+
+func TestHeaderRoundTripperSetsHeadersDeterministically(t *testing.T) {
+	req, err := http.NewRequest(http.MethodGet, "http://prometheus.example.com", nil)
+	if err != nil {
+		t.Fatalf("NewRequest failed: %v", err)
+	}
+	req.Header.Add("X-Scope-OrgID", "old")
+
+	rt := &headerRoundTripper{
+		headers: map[string]string{"X-Scope-OrgID": "new"},
+		rt: configRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			values := req.Header.Values("X-Scope-OrgID")
+			if len(values) != 1 || values[0] != "new" {
+				t.Fatalf("X-Scope-OrgID values = %v, want [new]", values)
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("ok")),
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	resp, err := rt.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip failed: %v", err)
+	}
+	defer resp.Body.Close()
+}
 
 func TestValidatePrometheusAddress(t *testing.T) {
 	tests := []struct {
