@@ -94,6 +94,31 @@ func TestEvictPodsWithReportCountsEvictionAndCompatibilityDelete(t *testing.T) {
 	assert.Equal(t, 0, report.PDBBlockedPods)
 }
 
+func TestEvictPodsWithReportKeepsPartialOutcomeOnDeletionTimeout(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	pod := &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "pod-1",
+			Namespace: "default",
+		},
+		Spec: coreV1.PodSpec{
+			NodeName: "node-1",
+		},
+	}
+	_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	cfg := evictionConfigWithDeleteAfterEvictionForTest()
+	cfg.DeleteAfterEviction = false
+
+	report, err := EvictPodsWithReport(context.Background(), client, "node-1", cfg)
+	assert.Error(t, err)
+	assert.Equal(t, 1, report.TotalPods)
+	assert.Equal(t, 1, report.EvictedPods)
+	assert.Equal(t, 0, report.DeletedPods)
+	assert.Equal(t, 0, report.PDBBlockedPods)
+}
+
 func TestEvictPodsWithReportCountsDeleteMode(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	pod := &coreV1.Pod{

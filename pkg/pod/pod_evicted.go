@@ -176,14 +176,11 @@ func EvictPodsWithReport(ctx context.Context, clientSet kubernetes.Interface, no
 
 	var errs []error
 	for result := range resultChan {
+		addPodEvictionOutcome(&report, result.outcome)
 		if result.err != nil {
-			if result.outcome.pdbBlocked {
-				report.PDBBlockedPods++
-			}
 			errs = append(errs, result.err)
 			continue
 		}
-		addPodEvictionOutcome(&report, result.outcome)
 	}
 
 	if len(problemPods) > 0 {
