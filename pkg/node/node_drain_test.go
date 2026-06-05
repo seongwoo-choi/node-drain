@@ -680,9 +680,73 @@ func TestNodeDrainWithReportSummarizesActualPodEviction(t *testing.T) {
 	if report.Summary.DeletedPods != 1 {
 		t.Fatalf("deleted pod count 불일치: got=%d want=1", report.Summary.DeletedPods)
 	}
+	if report.Summary.CordonedNodeCount != 1 {
+		t.Fatalf("cordoned node count 불일치: got=%d want=1", report.Summary.CordonedNodeCount)
+	}
 	if report.Summary.DrainedNodeCount != 1 {
 		t.Fatalf("drained node count 불일치: got=%d want=1", report.Summary.DrainedNodeCount)
 	}
+}
+
+func TestNodeDrainWithReportSummarizesCordonedNodeOnPodFailure(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "ceil")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "false")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	node := newNode(nodepoolName, 1)
+	if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("노드 생성 실패: %v", err)
+	}
+	p := newPodOnNode("default", "stuck-pod", "node-1", coreV1.PodRunning, "ReplicaSet", "workload-rs")
+	if _, err := clientSet.CoreV1().Pods(p.Namespace).Create(context.Background(), p, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("파드 생성 실패: %v", err)
+	}
+
+	evictionCfg := testEvictionConfig()
+	evictionCfg.PodDeletionTimeout = 20 * time.Millisecond
+	evictionCfg.CheckInterval = 5 * time.Millisecond
+	evictionCfg.DeleteAfterEviction = false
+
+	report, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: fakeAllocateRateProvider{
+			rates: map[string]int{
+				"memory": 30,
+				"cpu":    30,
+			},
+		},
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     evictionCfg,
+	})
+	if err == nil {
+		t.Fatal("expected pod removal failure")
+	}
+	if report.Summary.CordonedNodeCount != 1 {
+		t.Fatalf("cordoned node count 불일치: got=%d want=1", report.Summary.CordonedNodeCount)
+	}
+	if report.Summary.DrainedNodeCount != 0 {
+		t.Fatalf("drained node count 불일치: got=%d want=0", report.Summary.DrainedNodeCount)
+	}
+	if report.Summary.FailedNodeCount != 1 {
+		t.Fatalf("failed node count 불일치: got=%d want=1", report.Summary.FailedNodeCount)
+	}
+	if report.Summary.TotalPods != 1 {
+		t.Fatalf("total pod count 불일치: got=%d want=1", report.Summary.TotalPods)
+	}
+	if report.Summary.EvictedPods != 1 {
+		t.Fatalf("evicted pod count 불일치: got=%d want=1", report.Summary.EvictedPods)
+	}
+	assertNodeUnschedulable(t, clientSet, "node-1", true)
 }
 
 func TestWaitForPodsToTerminateReturnsImmediatelyWhenNoPodsRemain(t *testing.T) {

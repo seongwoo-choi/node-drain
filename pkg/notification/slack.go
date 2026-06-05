@@ -206,6 +206,7 @@ func formatNodeDrainSummaryBlock(summary types.NodeDrainSummary) string {
 	message += fmt.Sprintf("• TotalNodesInNodepool: %d\n", summary.TotalNodesInNodepool)
 	message += fmt.Sprintf("• PlannedDrainNodeCount: %d\n", summary.PlannedDrainNodeCount)
 	message += fmt.Sprintf("• SelectedDrainNodeCount: %d\n", summary.SelectedDrainNodeCount)
+	message += fmt.Sprintf("• CordonedNodeCount: %d\n", summary.CordonedNodeCount)
 	message += fmt.Sprintf("• DrainedNodeCount: %d\n", summary.DrainedNodeCount)
 	message += fmt.Sprintf("• SuccessfulNodeCount: %d\n", summary.SuccessfulNodeCount)
 	message += fmt.Sprintf("• FailedNodeCount: %d\n", summary.FailedNodeCount)

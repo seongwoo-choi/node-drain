@@ -333,6 +333,7 @@ func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []co
 			results = append(results, result)
 			return results, fmt.Errorf("노드 %s cordon 실패: %w", n.Name, err)
 		}
+		incrementCordonedNodeCount(summary)
 
 		podReport, err := drainSingleNode(ctx, clientSet, n.Name, cfg.Eviction)
 		addPodEvictionReportToSummary(summary, podReport)
@@ -434,6 +435,13 @@ func addPodEvictionReportToSummary(summary *types.NodeDrainSummary, report pod.E
 	summary.PDBBlockedPods += report.PDBBlockedPods
 	summary.ForcedByFallback += report.ForcedByFallback
 	summary.ProblemPodsForced += report.ProblemPodsForced
+}
+
+func incrementCordonedNodeCount(summary *types.NodeDrainSummary) {
+	if summary == nil {
+		return
+	}
+	summary.CordonedNodeCount++
 }
 
 func markDrainStoppedBySafety(summary *types.NodeDrainSummary, reason string) {

@@ -105,6 +105,7 @@ func TestFormatNodeDrainSummaryBlockIncludesOutcomeSignals(t *testing.T) {
 		TotalNodesInNodepool:   3,
 		PlannedDrainNodeCount:  2,
 		SelectedDrainNodeCount: 2,
+		CordonedNodeCount:      1,
 		DrainedNodeCount:       1,
 		SuccessfulNodeCount:    1,
 		FailedNodeCount:        0,
@@ -115,6 +116,7 @@ func TestFormatNodeDrainSummaryBlockIncludesOutcomeSignals(t *testing.T) {
 
 	for _, want := range []string{
 		"SelectedDrainNodeCount: 2",
+		"CordonedNodeCount: 1",
 		"DrainedNodeCount: 1",
 		"SuccessfulNodeCount: 1",
 		"StoppedBySafety: true",

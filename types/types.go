@@ -32,6 +32,7 @@ type NodeDrainSummary struct {
 	TotalNodesInNodepool   int    `json:"total_nodes_in_nodepool"`
 	PlannedDrainNodeCount  int    `json:"planned_drain_node_count"`
 	SelectedDrainNodeCount int    `json:"selected_drain_node_count"`
+	CordonedNodeCount      int    `json:"cordoned_node_count"`
 	DrainedNodeCount       int    `json:"drained_node_count"`
 	SuccessfulNodeCount    int    `json:"successful_node_count"`
 	FailedNodeCount        int    `json:"failed_node_count"`

@@ -180,7 +180,7 @@ go run main.go drain \
 여러 실행 환경(로컬/CI/클러스터 내부)에서 같은 NodePool drain을 동시에 막아야 한다면 `--drain-lock-mode kubernetes`를 사용하세요. 이 모드는 `coordination.k8s.io/v1` `Lease`를 사용하며, `--dry-run`에서는 lock을 잡지 않습니다.
 `--cluster-name`이 설정되면 Karpenter 사용률 PromQL에도 `cluster` label matcher를 포함해 같은 Prometheus Org 안의 다른 클러스터 NodePool과 섞이지 않도록 조회합니다.
 `--drain-node-selection empty-first` 또는 `least-pods`를 사용하면 제거 대상 파드가 적은 노드부터 선택해 재배치 충격을 줄일 수 있습니다. 이미 cordon된 노드가 남아 있는 환경에서는 `--drain-skip-unschedulable=true`를 함께 사용해 같은 노드를 반복 대상으로 잡지 않도록 하세요.
-`--output json`은 특히 `--dry-run`과 함께 사용할 때 유용합니다. 실제 cordon/evict 없이 선택된 노드, 제거 예정 pod, 계획/선택/성공/실패/안전중단 요약을 구조화된 JSON으로 확인할 수 있습니다. 실제 실행에서는 evict/delete/force delete/PDB 차단 pod 수도 summary에 포함됩니다.
+`--output json`은 특히 `--dry-run`과 함께 사용할 때 유용합니다. 실제 cordon/evict 없이 선택된 노드, 제거 예정 pod, 계획/선택/성공/실패/안전중단 요약을 구조화된 JSON으로 확인할 수 있습니다. 실제 실행에서는 cordon 완료 노드 수와 evict/delete/force delete/PDB 차단 pod 수도 summary에 포함됩니다.
 
 #### 파드 제거 정책(안전 우선 + 조건부 폴백)
 
