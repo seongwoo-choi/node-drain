@@ -94,6 +94,9 @@ func NewClientForCluster(nodepoolName string, clusterName string, querier Metric
 
 // GetKarpenterPodRequest returns pod request usage for a resource type.
 func (c *Client) GetKarpenterPodRequest(ctx context.Context, resourceType string) (float64, error) {
+	if err := c.validate(); err != nil {
+		return 0, err
+	}
 	matchers := c.resourceLabelMatchers(resourceType)
 	podRequests := fmt.Sprintf(
 		"max without (%s) (karpenter_nodes_total_pod_requests{%s})",
@@ -121,6 +124,9 @@ func (c *Client) GetKarpenterPodRequest(ctx context.Context, resourceType string
 
 // GetKarpenterNodepoolUsage returns nodepool usage for a resource type.
 func (c *Client) GetKarpenterNodepoolUsage(ctx context.Context, resourceType string) (float64, error) {
+	if err := c.validate(); err != nil {
+		return 0, err
+	}
 	var emptyErr error
 	matchers := c.resourceLabelMatchers(resourceType)
 	for _, metricName := range nodepoolUsageMetricNames {
@@ -146,6 +152,16 @@ func (c *Client) GetKarpenterNodepoolUsage(ctx context.Context, resourceType str
 		emptyErr = errors.New("empty prometheus result for nodepool usage")
 	}
 	return 0, emptyErr
+}
+
+func (c *Client) validate() error {
+	if c == nil {
+		return errors.New("karpenter client is required")
+	}
+	if c.querier == nil {
+		return errors.New("metrics querier is required")
+	}
+	return nil
 }
 
 func (c *Client) resourceLabelMatchers(resourceType string) string {

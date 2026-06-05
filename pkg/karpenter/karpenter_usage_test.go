@@ -165,6 +165,59 @@ func TestNewClientForClusterTrimsLabelMatchers(t *testing.T) {
 	}
 }
 
+func TestClientRejectsNilMetricsQuerier(t *testing.T) {
+	client := NewClientForCluster("nodepool-a", "cluster-a", nil)
+
+	for _, call := range []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "nodepool usage",
+			run: func() error {
+				_, err := client.GetKarpenterNodepoolUsage(context.Background(), "memory")
+				return err
+			},
+		},
+		{
+			name: "pod request",
+			run: func() error {
+				_, err := client.GetKarpenterPodRequest(context.Background(), "memory")
+				return err
+			},
+		},
+		{
+			name: "allocate rate",
+			run: func() error {
+				_, err := client.GetAllocateRate(context.Background(), "memory")
+				return err
+			},
+		},
+	} {
+		t.Run(call.name, func(t *testing.T) {
+			err := call.run()
+			if err == nil {
+				t.Fatal("expected nil metrics querier error")
+			}
+			if !strings.Contains(err.Error(), "metrics querier is required") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestClientRejectsNilReceiver(t *testing.T) {
+	var client *Client
+
+	_, err := client.GetKarpenterNodepoolUsage(context.Background(), "memory")
+	if err == nil {
+		t.Fatal("expected nil karpenter client error")
+	}
+	if !strings.Contains(err.Error(), "karpenter client is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestGetKarpenterPodRequestDeduplicatesScrapeTargets(t *testing.T) {
 	querier := &recordingMetricsQuerier{}
 	client := NewClientForCluster("nodepool-a", "cluster-a", querier)
