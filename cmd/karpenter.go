@@ -21,6 +21,8 @@ var (
 		Use:   "allocate-rate",
 		Short: "Allocate Rate 사용량 조회",
 		RunE: func(command *cobra.Command, args []string) error {
+			applyRootFlagEnv(command)
+
 			ctx := command.Context()
 			if ctx == nil {
 				ctx = context.Background()

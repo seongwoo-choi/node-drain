@@ -41,14 +41,42 @@ func init() {
 }
 
 func initConfig() {
-	// 환경 변수 설정
-	os.Setenv("PROMETHEUS_ADDRESS", prometheusAddress)
-	os.Setenv("PROMETHEUS_SCOPE_ORG_ID", prometheusOrgID)
-	os.Setenv("SLACK_WEBHOOK_URL", slackWebhookURL)
-	os.Setenv("KUBE_CONFIG", kubeConfig)
-	if kubeConfigPath != "" {
-		os.Setenv("KUBECONFIG", kubeConfigPath)
+	applyRootFlagEnv(rootCmd)
+}
+
+func applyRootFlagEnv(command *cobra.Command) {
+	setEnvFromFlagOrDefault(command, "prometheus-address", "PROMETHEUS_ADDRESS", prometheusAddress)
+	setEnvFromFlagOrDefault(command, "prometheus-org-id", "PROMETHEUS_SCOPE_ORG_ID", prometheusOrgID)
+	setEnvFromFlagOrDefault(command, "slack-webhook-url", "SLACK_WEBHOOK_URL", slackWebhookURL)
+	setEnvFromFlagOrDefault(command, "kube-config", "KUBE_CONFIG", kubeConfig)
+	setEnvFromFlagOrDefault(command, "kube-config-path", "KUBECONFIG", kubeConfigPath)
+	setEnvFromFlagOrDefault(command, "cluster-name", "CLUSTER_NAME", clusterName)
+	setEnvFromFlagOrDefault(command, "nodepool-name", "NODEPOOL_NAME", nodepoolName)
+}
+
+func setEnvFromFlagOrDefault(command *cobra.Command, flagName string, envKey string, value string) {
+	if commandFlagChanged(command, flagName) {
+		_ = os.Setenv(envKey, value)
+		return
 	}
-	os.Setenv("CLUSTER_NAME", clusterName)
-	os.Setenv("NODEPOOL_NAME", nodepoolName)
+	if _, exists := os.LookupEnv(envKey); exists {
+		return
+	}
+	if value != "" {
+		_ = os.Setenv(envKey, value)
+	}
+}
+
+func setEnvFromChangedFlag(command *cobra.Command, flagName string, envKey string, value string) {
+	if commandFlagChanged(command, flagName) {
+		_ = os.Setenv(envKey, value)
+	}
+}
+
+func commandFlagChanged(command *cobra.Command, flagName string) bool {
+	if command == nil {
+		command = rootCmd
+	}
+	flag := command.Flag(flagName)
+	return flag != nil && flag.Changed
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -108,6 +109,45 @@ func TestLocalDrainRunLockReleaseIsIdempotent(t *testing.T) {
 
 	releaseDrainRunLock(ctx, lockFile)
 	releaseDrainRunLock(ctx, lockFile)
+}
+
+func TestApplyDrainFlagEnvPreservesExistingEnvWhenFlagOmitted(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	drainMaxAbsolute = 0
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+
+	command := &cobra.Command{}
+	command.Flags().Int("drain-max-absolute", 0, "")
+
+	applyDrainFlagEnv(command)
+
+	if got := os.Getenv("DRAIN_MAX_ABSOLUTE"); got != "1" {
+		t.Fatalf("expected existing env to be preserved, got %q", got)
+	}
+}
+
+func TestApplyDrainFlagEnvUsesExplicitFlag(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	drainMaxAbsolute = 2
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+
+	command := &cobra.Command{}
+	command.Flags().Int("drain-max-absolute", 0, "")
+	if err := command.Flags().Set("drain-max-absolute", "2"); err != nil {
+		t.Fatalf("set flag failed: %v", err)
+	}
+
+	applyDrainFlagEnv(command)
+
+	if got := os.Getenv("DRAIN_MAX_ABSOLUTE"); got != "2" {
+		t.Fatalf("expected explicit flag to override env, got %q", got)
+	}
 }
 
 func TestReleaseDrainRunLockUsesFreshContext(t *testing.T) {

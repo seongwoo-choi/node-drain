@@ -16,7 +16,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -65,30 +64,8 @@ var drainCmd = &cobra.Command{
 	Use:   "drain",
 	Short: "노드 드레인 실행",
 	RunE: func(command *cobra.Command, args []string) error {
-		// drain 정책 플래그 -> env 주입
-		_ = os.Setenv("DRAIN_POLICY", drainPolicy)
-		_ = os.Setenv("DRAIN_ROUNDING", drainRounding)
-		_ = os.Setenv("DRAIN_MIN", strconv.Itoa(drainMin))
-		_ = os.Setenv("DRAIN_MAX_ABSOLUTE", strconv.Itoa(drainMaxAbsolute))
-		_ = os.Setenv("DRAIN_MAX_FRACTION", strconv.FormatFloat(drainMaxFraction, 'f', -1, 64))
-		_ = os.Setenv("DRAIN_STEP_RULES", drainStepRules)
-		_ = os.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", strconv.Itoa(drainSafetyMaxAllocateRate))
-		_ = os.Setenv("DRAIN_SAFETY_QUERIES", drainSafetyQueries)
-		_ = os.Setenv("DRAIN_SAFETY_FAIL_CLOSED", strconv.FormatBool(drainSafetyFailClosed))
-		_ = os.Setenv("DRAIN_PROGRESSIVE", strconv.FormatBool(drainProgressive))
-
-		// pod 제거 정책 플래그 -> env 주입
-		_ = os.Setenv("POD_EVICTION_MODE", podEvictionMode)
-		_ = os.Setenv("POD_FORCE", strconv.FormatBool(podForce))
-		_ = os.Setenv("POD_FORCE_PROBLEM_PODS", strconv.FormatBool(podForceProblemPods))
-		_ = os.Setenv("POD_DELETE_AFTER_EVICTION", strconv.FormatBool(podDeleteAfterEviction))
-		_ = os.Setenv("POD_PDB_TOKEN", strconv.FormatBool(podPDBToken))
-		_ = os.Setenv("POD_PDB_TOKEN_MAX_IN_FLIGHT", strconv.Itoa(podPDBTokenMaxInFlight))
-		_ = os.Setenv("POD_MAX_CONCURRENT", strconv.Itoa(podMaxConcurrent))
-		_ = os.Setenv("POD_MAX_RETRIES", strconv.Itoa(podMaxRetries))
-		_ = os.Setenv("POD_RETRY_BACKOFF", podRetryBackoff)
-		_ = os.Setenv("POD_DELETION_TIMEOUT", podDeletionTimeout)
-		_ = os.Setenv("POD_CHECK_INTERVAL", podCheckInterval)
+		applyRootFlagEnv(command)
+		applyDrainFlagEnv(command)
 
 		ctx := command.Context()
 		if ctx == nil {
@@ -212,6 +189,31 @@ func parseDrainOutputFormat(format string) (string, error) {
 	default:
 		return "", fmt.Errorf("지원하지 않는 output 형식: %s", format)
 	}
+}
+
+func applyDrainFlagEnv(command *cobra.Command) {
+	setEnvFromChangedFlag(command, "drain-policy", "DRAIN_POLICY", drainPolicy)
+	setEnvFromChangedFlag(command, "drain-rounding", "DRAIN_ROUNDING", drainRounding)
+	setEnvFromChangedFlag(command, "drain-min", "DRAIN_MIN", fmt.Sprintf("%d", drainMin))
+	setEnvFromChangedFlag(command, "drain-max-absolute", "DRAIN_MAX_ABSOLUTE", fmt.Sprintf("%d", drainMaxAbsolute))
+	setEnvFromChangedFlag(command, "drain-max-fraction", "DRAIN_MAX_FRACTION", fmt.Sprintf("%g", drainMaxFraction))
+	setEnvFromChangedFlag(command, "drain-step-rules", "DRAIN_STEP_RULES", drainStepRules)
+	setEnvFromChangedFlag(command, "drain-safety-max-allocate-rate", "DRAIN_SAFETY_MAX_ALLOCATE_RATE", fmt.Sprintf("%d", drainSafetyMaxAllocateRate))
+	setEnvFromChangedFlag(command, "drain-safety-queries", "DRAIN_SAFETY_QUERIES", drainSafetyQueries)
+	setEnvFromChangedFlag(command, "drain-safety-fail-closed", "DRAIN_SAFETY_FAIL_CLOSED", fmt.Sprintf("%t", drainSafetyFailClosed))
+	setEnvFromChangedFlag(command, "drain-progressive", "DRAIN_PROGRESSIVE", fmt.Sprintf("%t", drainProgressive))
+
+	setEnvFromChangedFlag(command, "pod-eviction-mode", "POD_EVICTION_MODE", podEvictionMode)
+	setEnvFromChangedFlag(command, "force", "POD_FORCE", fmt.Sprintf("%t", podForce))
+	setEnvFromChangedFlag(command, "force-problem-pods", "POD_FORCE_PROBLEM_PODS", fmt.Sprintf("%t", podForceProblemPods))
+	setEnvFromChangedFlag(command, "pod-delete-after-eviction", "POD_DELETE_AFTER_EVICTION", fmt.Sprintf("%t", podDeleteAfterEviction))
+	setEnvFromChangedFlag(command, "pdb-token", "POD_PDB_TOKEN", fmt.Sprintf("%t", podPDBToken))
+	setEnvFromChangedFlag(command, "pdb-token-max-in-flight", "POD_PDB_TOKEN_MAX_IN_FLIGHT", fmt.Sprintf("%d", podPDBTokenMaxInFlight))
+	setEnvFromChangedFlag(command, "pod-max-concurrent", "POD_MAX_CONCURRENT", fmt.Sprintf("%d", podMaxConcurrent))
+	setEnvFromChangedFlag(command, "pod-max-retries", "POD_MAX_RETRIES", fmt.Sprintf("%d", podMaxRetries))
+	setEnvFromChangedFlag(command, "pod-retry-backoff", "POD_RETRY_BACKOFF", podRetryBackoff)
+	setEnvFromChangedFlag(command, "pod-deletion-timeout", "POD_DELETION_TIMEOUT", podDeletionTimeout)
+	setEnvFromChangedFlag(command, "pod-check-interval", "POD_CHECK_INTERVAL", podCheckInterval)
 }
 
 func writeNodeDrainReport(w io.Writer, report types.NodeDrainReport, outputFormat string) error {
