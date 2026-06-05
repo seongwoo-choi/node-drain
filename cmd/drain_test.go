@@ -61,6 +61,10 @@ func TestDrainCommandReturnsKubeClientError(t *testing.T) {
 	podRetryBackoff = "10s"
 	podDeletionTimeout = "2m"
 	podCheckInterval = "20s"
+	podEvictionTimeout = "10m"
+	podNodeTerminationTimeout = "10m"
+	podNodeTerminationCheckTick = "15s"
+	podPostEvictionNodeDelay = "50s"
 
 	err := drainCmd.RunE(drainCmd, nil)
 	if err == nil {
@@ -303,6 +307,46 @@ func TestApplyDrainFlagEnvUsesExplicitFlag(t *testing.T) {
 
 	if got := os.Getenv("DRAIN_MAX_ABSOLUTE"); got != "2" {
 		t.Fatalf("expected explicit flag to override env, got %q", got)
+	}
+}
+
+func TestApplyDrainFlagEnvSetsExtendedPodTimeoutFlags(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	podEvictionTimeout = "3m"
+	podNodeTerminationTimeout = "4m"
+	podNodeTerminationCheckTick = "5s"
+	podPostEvictionNodeDelay = "0s"
+
+	command := &cobra.Command{}
+	command.Flags().String("pod-eviction-timeout", "10m", "")
+	command.Flags().String("pod-node-termination-timeout", "10m", "")
+	command.Flags().String("pod-node-termination-check-tick", "15s", "")
+	command.Flags().String("pod-post-eviction-node-delay", "50s", "")
+	for flag, value := range map[string]string{
+		"pod-eviction-timeout":            "3m",
+		"pod-node-termination-timeout":    "4m",
+		"pod-node-termination-check-tick": "5s",
+		"pod-post-eviction-node-delay":    "0s",
+	} {
+		if err := command.Flags().Set(flag, value); err != nil {
+			t.Fatalf("set %s failed: %v", flag, err)
+		}
+	}
+
+	applyDrainFlagEnv(command)
+
+	for key, want := range map[string]string{
+		"POD_EVICTION_TIMEOUT":            "3m",
+		"POD_NODE_TERMINATION_TIMEOUT":    "4m",
+		"POD_NODE_TERMINATION_CHECK_TICK": "5s",
+		"POD_POST_EVICTION_NODE_DELAY":    "0s",
+	} {
+		if got := os.Getenv(key); got != want {
+			t.Fatalf("%s = %q, want %q", key, got, want)
+		}
 	}
 }
 
@@ -681,6 +725,10 @@ func configureDrainCommandForValidationTest(t *testing.T) {
 		"POD_RETRY_BACKOFF",
 		"POD_DELETION_TIMEOUT",
 		"POD_CHECK_INTERVAL",
+		"POD_EVICTION_TIMEOUT",
+		"POD_NODE_TERMINATION_TIMEOUT",
+		"POD_NODE_TERMINATION_CHECK_TICK",
+		"POD_POST_EVICTION_NODE_DELAY",
 	} {
 		t.Setenv(key, "")
 	}
@@ -722,6 +770,10 @@ func configureDrainCommandForValidationTest(t *testing.T) {
 	podRetryBackoff = "10s"
 	podDeletionTimeout = "2m"
 	podCheckInterval = "20s"
+	podEvictionTimeout = "10m"
+	podNodeTerminationTimeout = "10m"
+	podNodeTerminationCheckTick = "15s"
+	podPostEvictionNodeDelay = "50s"
 
 	t.Setenv("PROMETHEUS_ADDRESS", "http://localhost:8080/prometheus")
 	t.Setenv("CLUSTER_NAME", "test-cluster")
@@ -767,6 +819,10 @@ func restoreCommandEnv(t *testing.T) {
 		"POD_RETRY_BACKOFF",
 		"POD_DELETION_TIMEOUT",
 		"POD_CHECK_INTERVAL",
+		"POD_EVICTION_TIMEOUT",
+		"POD_NODE_TERMINATION_TIMEOUT",
+		"POD_NODE_TERMINATION_CHECK_TICK",
+		"POD_POST_EVICTION_NODE_DELAY",
 	}
 	for _, key := range keys {
 		t.Setenv(key, "")
@@ -823,6 +879,10 @@ func snapshotCommandGlobals() func() {
 	origPodRetryBackoff := podRetryBackoff
 	origPodDeletionTimeout := podDeletionTimeout
 	origPodCheckInterval := podCheckInterval
+	origPodEvictionTimeout := podEvictionTimeout
+	origPodNodeTerminationTimeout := podNodeTerminationTimeout
+	origPodNodeTerminationCheckTick := podNodeTerminationCheckTick
+	origPodPostEvictionNodeDelay := podPostEvictionNodeDelay
 
 	return func() {
 		prometheusAddress = origPrometheusAddress
@@ -862,5 +922,9 @@ func snapshotCommandGlobals() func() {
 		podRetryBackoff = origPodRetryBackoff
 		podDeletionTimeout = origPodDeletionTimeout
 		podCheckInterval = origPodCheckInterval
+		podEvictionTimeout = origPodEvictionTimeout
+		podNodeTerminationTimeout = origPodNodeTerminationTimeout
+		podNodeTerminationCheckTick = origPodNodeTerminationCheckTick
+		podPostEvictionNodeDelay = origPodPostEvictionNodeDelay
 	}
 }

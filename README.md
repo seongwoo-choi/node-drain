@@ -200,6 +200,10 @@ go run main.go drain \
 | `--pod-retry-backoff` | `10s` | Pod 제거 재시도 간격 |
 | `--pod-deletion-timeout` | `2m` | Pod 삭제 대기 타임아웃 |
 | `--pod-check-interval` | `20s` | Pod 삭제 상태 확인 주기 |
+| `--pod-eviction-timeout` | `10m` | 노드 단위 Pod 제거 전체 타임아웃 |
+| `--pod-node-termination-timeout` | `10m` | 노드의 데몬셋 제외 Pod 종료 대기 타임아웃 |
+| `--pod-node-termination-check-tick` | `15s` | 노드 Pod 종료 상태 확인 주기 |
+| `--pod-post-eviction-node-delay` | `50s` | 노드 드레인 후 추가 대기 시간(`0s`이면 비활성) |
 
 ##### 예시 1) “한 번에 최대 2대, 최대 20%까지만” + “작은 클러스터 0대 방지”
 
@@ -340,6 +344,10 @@ CLI는 설정을 `명시적으로 전달된 CLI 플래그 > 기존 환경 변수
 | `POD_RETRY_BACKOFF` | 재시도 간격 |
 | `POD_DELETION_TIMEOUT` | 삭제 대기 타임아웃 |
 | `POD_CHECK_INTERVAL` | 상태 확인 주기 |
+| `POD_EVICTION_TIMEOUT` | 노드 단위 Pod 제거 전체 타임아웃 |
+| `POD_NODE_TERMINATION_TIMEOUT` | 노드의 데몬셋 제외 Pod 종료 대기 타임아웃 |
+| `POD_NODE_TERMINATION_CHECK_TICK` | 노드 Pod 종료 상태 확인 주기 |
+| `POD_POST_EVICTION_NODE_DELAY` | 노드 드레인 후 추가 대기 시간(`0s`이면 비활성) |
 
 ---
 

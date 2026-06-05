@@ -3,6 +3,7 @@ package pod
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateEvictionConfigEnvRejectsInvalidValues(t *testing.T) {
@@ -18,6 +19,10 @@ func TestValidateEvictionConfigEnvRejectsInvalidValues(t *testing.T) {
 		{name: "zero retries", key: "POD_MAX_RETRIES", val: "0", want: "POD_MAX_RETRIES"},
 		{name: "negative retries", key: "POD_MAX_RETRIES", val: "-1", want: "POD_MAX_RETRIES"},
 		{name: "invalid duration", key: "POD_RETRY_BACKOFF", val: "soon", want: "POD_RETRY_BACKOFF"},
+		{name: "zero eviction timeout", key: "POD_EVICTION_TIMEOUT", val: "0s", want: "POD_EVICTION_TIMEOUT"},
+		{name: "zero node termination timeout", key: "POD_NODE_TERMINATION_TIMEOUT", val: "0s", want: "POD_NODE_TERMINATION_TIMEOUT"},
+		{name: "zero node termination check tick", key: "POD_NODE_TERMINATION_CHECK_TICK", val: "0s", want: "POD_NODE_TERMINATION_CHECK_TICK"},
+		{name: "negative post eviction delay", key: "POD_POST_EVICTION_NODE_DELAY", val: "-1s", want: "POD_POST_EVICTION_NODE_DELAY"},
 	}
 
 	for _, tt := range tests {
@@ -49,9 +54,36 @@ func TestValidateEvictionConfigEnvAcceptsValidValues(t *testing.T) {
 	t.Setenv("POD_RETRY_BACKOFF", "10s")
 	t.Setenv("POD_DELETION_TIMEOUT", "2m")
 	t.Setenv("POD_CHECK_INTERVAL", "20s")
+	t.Setenv("POD_EVICTION_TIMEOUT", "10m")
+	t.Setenv("POD_NODE_TERMINATION_TIMEOUT", "10m")
+	t.Setenv("POD_NODE_TERMINATION_CHECK_TICK", "15s")
+	t.Setenv("POD_POST_EVICTION_NODE_DELAY", "0s")
 
 	if err := ValidateEvictionConfigEnv(); err != nil {
 		t.Fatalf("ValidateEvictionConfigEnv() error = %v", err)
+	}
+}
+
+func TestGetEvictionConfigFromEnvParsesExtendedTimeouts(t *testing.T) {
+	clearEvictionConfigEnv(t)
+	t.Setenv("POD_EVICTION_TIMEOUT", "3m")
+	t.Setenv("POD_NODE_TERMINATION_TIMEOUT", "4m")
+	t.Setenv("POD_NODE_TERMINATION_CHECK_TICK", "5s")
+	t.Setenv("POD_POST_EVICTION_NODE_DELAY", "0s")
+
+	cfg := GetEvictionConfigFromEnv()
+
+	if cfg.EvictionTimeout != 3*time.Minute {
+		t.Fatalf("EvictionTimeout = %s, want=3m", cfg.EvictionTimeout)
+	}
+	if cfg.NodeTerminationTimeout != 4*time.Minute {
+		t.Fatalf("NodeTerminationTimeout = %s, want=4m", cfg.NodeTerminationTimeout)
+	}
+	if cfg.NodeTerminationCheckTick != 5*time.Second {
+		t.Fatalf("NodeTerminationCheckTick = %s, want=5s", cfg.NodeTerminationCheckTick)
+	}
+	if cfg.PostEvictionNodeDelay != 0 {
+		t.Fatalf("PostEvictionNodeDelay = %s, want=0", cfg.PostEvictionNodeDelay)
 	}
 }
 
@@ -69,6 +101,10 @@ func clearEvictionConfigEnv(t *testing.T) {
 		"POD_RETRY_BACKOFF",
 		"POD_DELETION_TIMEOUT",
 		"POD_CHECK_INTERVAL",
+		"POD_EVICTION_TIMEOUT",
+		"POD_NODE_TERMINATION_TIMEOUT",
+		"POD_NODE_TERMINATION_CHECK_TICK",
+		"POD_POST_EVICTION_NODE_DELAY",
 	} {
 		t.Setenv(key, "")
 	}

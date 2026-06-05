@@ -80,6 +80,30 @@ func GetEvictionConfigFromEnv() *EvictionConfig {
 		}
 	}
 
+	if v := strings.TrimSpace(os.Getenv("POD_EVICTION_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.EvictionTimeout = d
+		}
+	}
+
+	if v := strings.TrimSpace(os.Getenv("POD_NODE_TERMINATION_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.NodeTerminationTimeout = d
+		}
+	}
+
+	if v := strings.TrimSpace(os.Getenv("POD_NODE_TERMINATION_CHECK_TICK")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.NodeTerminationCheckTick = d
+		}
+	}
+
+	if v := strings.TrimSpace(os.Getenv("POD_POST_EVICTION_NODE_DELAY")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.PostEvictionNodeDelay = d
+		}
+	}
+
 	// 안전 클램프
 	if cfg.MaxConcurrentEvictions <= 0 {
 		cfg.MaxConcurrentEvictions = 1
@@ -116,10 +140,13 @@ func ValidateEvictionConfigEnv() error {
 	if err := validatePositiveEnvInt("POD_MAX_RETRIES"); err != nil {
 		return err
 	}
-	for _, key := range []string{"POD_RETRY_BACKOFF", "POD_DELETION_TIMEOUT", "POD_CHECK_INTERVAL"} {
+	for _, key := range []string{"POD_RETRY_BACKOFF", "POD_DELETION_TIMEOUT", "POD_CHECK_INTERVAL", "POD_EVICTION_TIMEOUT", "POD_NODE_TERMINATION_TIMEOUT", "POD_NODE_TERMINATION_CHECK_TICK"} {
 		if err := validatePositiveEnvDuration(key); err != nil {
 			return err
 		}
+	}
+	if err := validateNonNegativeEnvDuration("POD_POST_EVICTION_NODE_DELAY"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -176,6 +203,21 @@ func validatePositiveEnvDuration(key string) error {
 	}
 	if d <= 0 {
 		return fmt.Errorf("invalid %s: must be greater than 0", key)
+	}
+	return nil
+}
+
+func validateNonNegativeEnvDuration(key string) error {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
+	}
+	if d < 0 {
+		return fmt.Errorf("invalid %s: must be non-negative", key)
 	}
 	return nil
 }

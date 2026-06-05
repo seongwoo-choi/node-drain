@@ -50,17 +50,21 @@ var (
 	drainSkipUnschedulable     bool
 	drainOutputFormat          string
 
-	podEvictionMode        string
-	podForce               bool
-	podForceProblemPods    bool
-	podDeleteAfterEviction bool
-	podPDBToken            bool
-	podPDBTokenMaxInFlight int
-	podMaxConcurrent       int
-	podMaxRetries          int
-	podRetryBackoff        string
-	podDeletionTimeout     string
-	podCheckInterval       string
+	podEvictionMode             string
+	podForce                    bool
+	podForceProblemPods         bool
+	podDeleteAfterEviction      bool
+	podPDBToken                 bool
+	podPDBTokenMaxInFlight      int
+	podMaxConcurrent            int
+	podMaxRetries               int
+	podRetryBackoff             string
+	podDeletionTimeout          string
+	podCheckInterval            string
+	podEvictionTimeout          string
+	podNodeTerminationTimeout   string
+	podNodeTerminationCheckTick string
+	podPostEvictionNodeDelay    string
 )
 
 var drainCmd = &cobra.Command{
@@ -218,6 +222,10 @@ func init() {
 	drainCmd.Flags().StringVar(&podRetryBackoff, "pod-retry-backoff", "10s", "Pod 제거 재시도 간격")
 	drainCmd.Flags().StringVar(&podDeletionTimeout, "pod-deletion-timeout", "2m", "Pod 삭제 대기 타임아웃")
 	drainCmd.Flags().StringVar(&podCheckInterval, "pod-check-interval", "20s", "Pod 삭제 상태 확인 주기")
+	drainCmd.Flags().StringVar(&podEvictionTimeout, "pod-eviction-timeout", "10m", "노드 단위 Pod 제거 전체 타임아웃")
+	drainCmd.Flags().StringVar(&podNodeTerminationTimeout, "pod-node-termination-timeout", "10m", "노드의 데몬셋 제외 Pod 종료 대기 타임아웃")
+	drainCmd.Flags().StringVar(&podNodeTerminationCheckTick, "pod-node-termination-check-tick", "15s", "노드 Pod 종료 상태 확인 주기")
+	drainCmd.Flags().StringVar(&podPostEvictionNodeDelay, "pod-post-eviction-node-delay", "50s", "노드 드레인 후 추가 대기 시간(0이면 비활성)")
 }
 
 func validateDrainCommandConfig() error {
@@ -333,6 +341,10 @@ func applyDrainFlagEnv(command *cobra.Command) {
 	setEnvFromChangedFlag(command, "pod-retry-backoff", "POD_RETRY_BACKOFF", podRetryBackoff)
 	setEnvFromChangedFlag(command, "pod-deletion-timeout", "POD_DELETION_TIMEOUT", podDeletionTimeout)
 	setEnvFromChangedFlag(command, "pod-check-interval", "POD_CHECK_INTERVAL", podCheckInterval)
+	setEnvFromChangedFlag(command, "pod-eviction-timeout", "POD_EVICTION_TIMEOUT", podEvictionTimeout)
+	setEnvFromChangedFlag(command, "pod-node-termination-timeout", "POD_NODE_TERMINATION_TIMEOUT", podNodeTerminationTimeout)
+	setEnvFromChangedFlag(command, "pod-node-termination-check-tick", "POD_NODE_TERMINATION_CHECK_TICK", podNodeTerminationCheckTick)
+	setEnvFromChangedFlag(command, "pod-post-eviction-node-delay", "POD_POST_EVICTION_NODE_DELAY", podPostEvictionNodeDelay)
 }
 
 func applyDrainRuntimeEnv() error {
