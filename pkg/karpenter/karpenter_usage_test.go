@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -185,6 +186,38 @@ func TestNewClientForClusterTrimsLabelMatchers(t *testing.T) {
 	} {
 		if strings.Contains(query, unexpected) {
 			t.Fatalf("query contains untrimmed matcher %q: %s", unexpected, query)
+		}
+	}
+}
+
+func TestNewClientForClusterEscapesLabelMatcherValues(t *testing.T) {
+	nodepool := `nodepool-"a"\blue`
+	cluster := `cluster-"b"\green`
+	querier := &recordingMetricsQuerier{}
+	client := NewClientForCluster(nodepool, cluster, querier)
+
+	_, err := client.GetKarpenterNodepoolUsage(context.Background(), "memory")
+	if err != nil {
+		t.Fatalf("GetKarpenterNodepoolUsage() error = %v", err)
+	}
+	if len(querier.queries) != 1 {
+		t.Fatalf("query count = %d, want=1", len(querier.queries))
+	}
+	query := querier.queries[0]
+	for _, want := range []string{
+		`nodepool=` + strconv.Quote(nodepool),
+		`cluster=` + strconv.Quote(cluster),
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("query missing escaped matcher %q: %s", want, query)
+		}
+	}
+	for _, unexpected := range []string{
+		`nodepool="` + nodepool + `"`,
+		`cluster="` + cluster + `"`,
+	} {
+		if strings.Contains(query, unexpected) {
+			t.Fatalf("query contains unescaped matcher %q: %s", unexpected, query)
 		}
 	}
 }
