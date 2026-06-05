@@ -318,6 +318,45 @@ func TestPodWithPDBEviction(t *testing.T) {
 	}
 }
 
+func TestCheckPDBRefreshesDisruptionsAllowed(t *testing.T) {
+	resetPDBCacheForTest()
+
+	pod := coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "pod-with-pdb",
+			Namespace: "default",
+			Labels: map[string]string{
+				"app": "test",
+			},
+		},
+		Spec: coreV1.PodSpec{
+			NodeName: "node-1",
+		},
+	}
+
+	pdb := newTestPDB("default", "test-pdb")
+	pdb.Status.DisruptionsAllowed = 0
+
+	client := fake.NewSimpleClientset(&pod, pdb)
+
+	if err := checkPDB(context.Background(), client, pod); err == nil {
+		t.Fatal("expected initial PDB check to block")
+	}
+
+	updatedPDB, err := client.PolicyV1().PodDisruptionBudgets("default").Get(context.Background(), "test-pdb", metaV1.GetOptions{})
+	if err != nil {
+		t.Fatalf("PDB 조회 실패: %v", err)
+	}
+	updatedPDB.Status.DisruptionsAllowed = 1
+	if _, err = client.PolicyV1().PodDisruptionBudgets("default").UpdateStatus(context.Background(), updatedPDB, metaV1.UpdateOptions{}); err != nil {
+		t.Fatalf("PDB status 갱신 실패: %v", err)
+	}
+
+	if err = checkPDB(context.Background(), client, pod); err != nil {
+		t.Fatalf("expected refreshed PDB status to allow eviction: %v", err)
+	}
+}
+
 func TestPDBCacheTTLIsNamespaceScoped(t *testing.T) {
 	resetPDBCacheForTest()
 

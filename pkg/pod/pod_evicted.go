@@ -342,7 +342,7 @@ func evictPodWithRetry(ctx context.Context, clientSet kubernetes.Interface, pod 
 }
 
 func checkPDB(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod) error {
-	pdbs, err := getPDBsWithCache(ctx, clientSet, pod.Namespace)
+	pdbs, err := listPDBs(ctx, clientSet, pod.Namespace)
 	if err != nil {
 		return fmt.Errorf("PDB 조회 실패: %w", err)
 	}
@@ -359,6 +359,19 @@ func checkPDB(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Po
 	}
 
 	return nil
+}
+
+func listPDBs(ctx context.Context, clientSet kubernetes.Interface, namespace string) ([]*policyv1.PodDisruptionBudget, error) {
+	pdbList, err := clientSet.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metaV1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	pdbs := make([]*policyv1.PodDisruptionBudget, 0, len(pdbList.Items))
+	for i := range pdbList.Items {
+		pdbs = append(pdbs, &pdbList.Items[i])
+	}
+	return pdbs, nil
 }
 
 func getPDBsWithCache(ctx context.Context, clientSet kubernetes.Interface, namespace string) ([]*policyv1.PodDisruptionBudget, error) {
@@ -378,14 +391,9 @@ func getPDBsWithCache(ctx context.Context, clientSet kubernetes.Interface, names
 		return entry.pdbs, nil
 	}
 
-	pdbList, err := clientSet.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metaV1.ListOptions{})
+	pdbs, err := listPDBs(ctx, clientSet, namespace)
 	if err != nil {
 		return nil, err
-	}
-
-	pdbs := make([]*policyv1.PodDisruptionBudget, 0, len(pdbList.Items))
-	for i := range pdbList.Items {
-		pdbs = append(pdbs, &pdbList.Items[i])
 	}
 
 	globalPDBCache.cache[namespace] = pdbCacheEntry{
