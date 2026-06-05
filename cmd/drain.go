@@ -546,10 +546,7 @@ func newKubernetesLeaseLock(clientSet kubernetes.Interface, namespace string, na
 }
 
 func (l *kubernetesLeaseLock) startRenewal(duration time.Duration) {
-	interval := duration / 3
-	if interval < 10*time.Second {
-		interval = 10 * time.Second
-	}
+	interval := kubernetesLeaseRenewalInterval(duration)
 
 	go func() {
 		defer close(l.done)
@@ -566,6 +563,23 @@ func (l *kubernetesLeaseLock) startRenewal(duration time.Duration) {
 			}
 		}
 	}()
+}
+
+func kubernetesLeaseRenewalInterval(duration time.Duration) time.Duration {
+	if duration <= 0 {
+		return time.Second
+	}
+	interval := duration / 3
+	if interval <= 0 {
+		return time.Second
+	}
+	if interval < time.Second {
+		return interval
+	}
+	if interval < 10*time.Second {
+		return interval
+	}
+	return 10 * time.Second
 }
 
 func (l *kubernetesLeaseLock) renew(ctx context.Context, duration time.Duration) error {

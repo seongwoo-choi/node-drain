@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -423,6 +424,23 @@ func TestKubernetesDrainRunLockReleaseIsIdempotent(t *testing.T) {
 
 	releaseDrainRunLock(ctx, lock)
 	releaseDrainRunLock(ctx, lock)
+}
+
+func TestKubernetesLeaseRenewalIntervalStaysBelowShortLeaseDuration(t *testing.T) {
+	interval := kubernetesLeaseRenewalInterval(5 * time.Second)
+	if interval >= 5*time.Second {
+		t.Fatalf("renewal interval = %s, want less than lease duration", interval)
+	}
+	if interval != 5*time.Second/3 {
+		t.Fatalf("renewal interval = %s, want %s", interval, 5*time.Second/3)
+	}
+}
+
+func TestKubernetesLeaseRenewalIntervalCapsLongLeaseDuration(t *testing.T) {
+	interval := kubernetesLeaseRenewalInterval(10 * time.Minute)
+	if interval != 10*time.Second {
+		t.Fatalf("renewal interval = %s, want 10s", interval)
+	}
 }
 
 func TestWriteNodeDrainReportJSON(t *testing.T) {
