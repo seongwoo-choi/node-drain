@@ -627,6 +627,60 @@ func TestNodeDrainWithReportSummarizesDryRunPlan(t *testing.T) {
 	}
 }
 
+func TestNodeDrainDryRunSkipsFinalAllocateRateRefresh(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "true")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	for i := 1; i <= 3; i++ {
+		node := newNode(nodepoolName, i)
+		if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+			t.Fatalf("노드 생성 실패: %v", err)
+		}
+	}
+
+	provider := &sequenceAllocateRateProvider{
+		rates: map[string][]int{
+			"memory": {30, 31},
+			"cpu":    {30, 31},
+		},
+		calls: map[string]int{},
+	}
+
+	report, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: provider,
+		Notifier:             fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     testEvictionConfig(),
+		DryRun:       true,
+	})
+	if err != nil {
+		t.Fatalf("NodeDrainWithReport dry-run 실패: %v", err)
+	}
+	if len(report.Results) != 1 {
+		t.Fatalf("dry-run 결과 개수 불일치: got=%d want=1", len(report.Results))
+	}
+	if got := provider.calls["memory"]; got != 1 {
+		t.Fatalf("memory allocate rate 호출 횟수 불일치: got=%d want=1", got)
+	}
+	if got := provider.calls["cpu"]; got != 1 {
+		t.Fatalf("cpu allocate rate 호출 횟수 불일치: got=%d want=1", got)
+	}
+	if len(report.Summary.Warnings) != 0 {
+		t.Fatalf("dry-run final warning이 없어야 함: %+v", report.Summary.Warnings)
+	}
+}
+
 func TestNodeDrainWithReportSummarizesActualPodEviction(t *testing.T) {
 	t.Setenv("DRAIN_POLICY", "formula")
 	t.Setenv("DRAIN_ROUNDING", "floor")

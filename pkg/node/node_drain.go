@@ -376,6 +376,10 @@ func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []co
 		}
 	}
 
+	if cfg.DryRun {
+		return results, nil
+	}
+
 	memoryAllocateRate, err := deps.AllocateRateProvider.GetAllocateRate(ctx, "memory")
 	memErr := err
 	cpuAllocateRate, err := deps.AllocateRateProvider.GetAllocateRate(ctx, "cpu")
