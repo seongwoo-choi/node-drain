@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -13,6 +14,7 @@ import (
 
 // GetKubeClientSet returns a Kubernetes clientset by configuration mode.
 func GetKubeClientSet(kubeConfigMode string, kubeConfigPath string) (kubernetes.Interface, error) {
+	kubeConfigMode = strings.TrimSpace(kubeConfigMode)
 	switch {
 	case kubeConfigMode == "github_action", kubeConfigMode == "local":
 		configPath := resolveKubeConfigPath(kubeConfigPath)
@@ -34,11 +36,12 @@ func GetKubeClientSet(kubeConfigMode string, kubeConfigPath string) (kubernetes.
 }
 
 func resolveKubeConfigPath(path string) string {
+	path = strings.TrimSpace(path)
 	if path != "" {
 		return path
 	}
 
-	if envPath := os.Getenv("KUBECONFIG"); envPath != "" {
+	if envPath := strings.TrimSpace(os.Getenv("KUBECONFIG")); envPath != "" {
 		return envPath
 	}
 
