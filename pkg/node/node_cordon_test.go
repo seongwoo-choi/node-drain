@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -43,5 +44,25 @@ func TestCordonNode(t *testing.T) {
 	}
 	if !updatedNode.Spec.Unschedulable {
 		t.Error("노드 Cordon 이후 노드가 스케줄링 불가능 상태가 아닙니다.")
+	}
+}
+
+func TestCordonNodeRejectsNilKubernetesClient(t *testing.T) {
+	err := CordonNode(context.Background(), nil, "test-node")
+	if err == nil {
+		t.Fatal("expected nil kubernetes client error")
+	}
+	if !strings.Contains(err.Error(), "kubernetes client is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCordonNodeRejectsEmptyNodeName(t *testing.T) {
+	err := CordonNode(context.Background(), fake.NewSimpleClientset(), " ")
+	if err == nil {
+		t.Fatal("expected empty node name error")
+	}
+	if !strings.Contains(err.Error(), "node name is required") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
