@@ -17,10 +17,10 @@ type fakeMetricsQuerier struct {
 
 func (f fakeMetricsQuerier) Query(ctx context.Context, query string) (prometheusModel.Vector, error) {
 	resourceType := "unknown"
-	if strings.Contains(query, "resource_type='memory'") {
+	if strings.Contains(query, "resource_type='memory'") || strings.Contains(query, `resource_type="memory"`) {
 		resourceType = "memory"
 	}
-	if strings.Contains(query, "resource_type='cpu'") {
+	if strings.Contains(query, "resource_type='cpu'") || strings.Contains(query, `resource_type="cpu"`) {
 		resourceType = "cpu"
 	}
 
@@ -37,6 +37,18 @@ func (f fakeMetricsQuerier) Query(ctx context.Context, query string) (prometheus
 		return vectorOf(f.requestByResource[resourceType]), nil
 	}
 	return prometheusModel.Vector{}, nil
+}
+
+type recordingMetricsQuerier struct {
+	queries []string
+}
+
+func (r *recordingMetricsQuerier) Query(ctx context.Context, query string) (prometheusModel.Vector, error) {
+	r.queries = append(r.queries, query)
+	if strings.Contains(query, "karpenter_nodes_total_pod_requests") {
+		return vectorOf(50), nil
+	}
+	return vectorOf(100), nil
 }
 
 func vectorOf(value float64) prometheusModel.Vector {
@@ -62,6 +74,31 @@ func TestGetKarpenterNodepoolUsageFallsBackToLegacyMetric(t *testing.T) {
 	}
 	if got != 200 {
 		t.Fatalf("GetKarpenterNodepoolUsage() = %.0f, want=200", got)
+	}
+}
+
+func TestGetAllocateRateScopesQueriesByCluster(t *testing.T) {
+	querier := &recordingMetricsQuerier{}
+	client := NewClientForCluster("nodepool-a", "cluster-a", querier)
+
+	_, err := client.GetAllocateRate(context.Background(), "cpu")
+	if err != nil {
+		t.Fatalf("GetAllocateRate() error = %v", err)
+	}
+
+	if len(querier.queries) != 2 {
+		t.Fatalf("query count = %d, want=2", len(querier.queries))
+	}
+	for _, query := range querier.queries {
+		if !strings.Contains(query, `nodepool="nodepool-a"`) {
+			t.Fatalf("query missing nodepool matcher: %s", query)
+		}
+		if !strings.Contains(query, `cluster="cluster-a"`) {
+			t.Fatalf("query missing cluster matcher: %s", query)
+		}
+		if !strings.Contains(query, `resource_type="cpu"`) {
+			t.Fatalf("query missing resource_type matcher: %s", query)
+		}
 	}
 }
 

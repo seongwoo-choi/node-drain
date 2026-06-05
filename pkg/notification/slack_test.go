@@ -69,6 +69,63 @@ func TestSlackNoWebhookIsNoop(t *testing.T) {
 	}
 }
 
+func TestFormatNodeDrainDryRunMessage(t *testing.T) {
+	notifier := NewSlackNotifier(SlackConfig{
+		ClusterName:  "test-cluster",
+		NodepoolName: "test-pool",
+	})
+
+	message := notifier.formatNodeDrainMessage([]types.NodeDrainResult{
+		{
+			NodeName:     "node-1",
+			InstanceType: "t3.medium",
+			NodepoolName: "test-pool",
+			DryRun:       true,
+			Success:      true,
+			PlannedPods: []types.NodeDrainPodPlan{
+				{Namespace: "default", Name: "pod-1"},
+			},
+		},
+	})
+
+	if !strings.Contains(message, "dry-run 계획 생성 완료") {
+		t.Fatalf("dry-run message header missing: %s", message)
+	}
+	if !strings.Contains(message, "상태: 계획") {
+		t.Fatalf("dry-run status missing: %s", message)
+	}
+	if !strings.Contains(message, "제거 예정 Pod: 1개") {
+		t.Fatalf("planned pod count missing: %s", message)
+	}
+}
+
+func TestFormatNodeDrainSummaryBlockIncludesOutcomeSignals(t *testing.T) {
+	message := formatNodeDrainSummaryBlock(types.NodeDrainSummary{
+		TargetNodepool:         "test-pool",
+		TotalNodesInNodepool:   3,
+		PlannedDrainNodeCount:  2,
+		SelectedDrainNodeCount: 2,
+		DrainedNodeCount:       1,
+		SuccessfulNodeCount:    1,
+		FailedNodeCount:        0,
+		StoppedBySafety:        true,
+		StopSafetyReason:       "maxAllocateRate(95) >= safetyMaxAllocateRate(90)",
+		Warnings:               []string{"최종 Karpenter 사용률 조회 실패"},
+	})
+
+	for _, want := range []string{
+		"SelectedDrainNodeCount: 2",
+		"DrainedNodeCount: 1",
+		"SuccessfulNodeCount: 1",
+		"StoppedBySafety: true",
+		"Warnings: 최종 Karpenter 사용률 조회 실패",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("summary message missing %q: %s", want, message)
+		}
+	}
+}
+
 func TestSlackRetryOn5xx(t *testing.T) {
 	attempts := 0
 	notifier := NewSlackNotifier(SlackConfig{

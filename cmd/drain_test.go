@@ -1,9 +1,15 @@
 package cmd
 
 import (
+	"app/types"
+	"bytes"
+	"context"
 	"os"
 	"strings"
 	"testing"
+
+	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestDrainCommandReturnsKubeClientError(t *testing.T) {
@@ -33,10 +39,18 @@ func TestDrainCommandReturnsKubeClientError(t *testing.T) {
 	drainSafetyQueries = ""
 	drainSafetyFailClosed = true
 	drainProgressive = true
+	drainDryRun = false
+	drainLockMode = "local"
+	drainLockNamespace = "kube-system"
+	drainLockLeaseDuration = "10m"
+	drainNodeSelectionStrategy = "oldest"
+	drainSkipUnschedulable = false
+	drainOutputFormat = "text"
 
 	podEvictionMode = "evict"
 	podForce = false
 	podForceProblemPods = true
+	podDeleteAfterEviction = false
 	podPDBToken = true
 	podPDBTokenMaxInFlight = 1
 	podMaxConcurrent = 30
@@ -51,6 +65,152 @@ func TestDrainCommandReturnsKubeClientError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "쿠버네티스 클라이언트 생성 실패") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAcquireDrainRunLockBlocksDuplicate(t *testing.T) {
+	lockFile, err := acquireLocalDrainRunLock("test-cluster", "test-nodepool")
+	if err != nil {
+		t.Fatalf("acquireDrainRunLock failed: %v", err)
+	}
+	defer releaseDrainRunLock(context.Background(), lockFile)
+
+	duplicateLockFile, err := acquireLocalDrainRunLock("test-cluster", "test-nodepool")
+	if err == nil {
+		releaseDrainRunLock(context.Background(), duplicateLockFile)
+		t.Fatal("expected duplicate lock error, got nil")
+	}
+	if !strings.Contains(err.Error(), "이미 동일 cluster/nodepool 드레인이 실행 중입니다") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAcquireDrainRunLockAllowsDifferentNodepool(t *testing.T) {
+	lockFile, err := acquireLocalDrainRunLock("test-cluster", "test-nodepool-a")
+	if err != nil {
+		t.Fatalf("acquireDrainRunLock failed: %v", err)
+	}
+	defer releaseDrainRunLock(context.Background(), lockFile)
+
+	otherLockFile, err := acquireLocalDrainRunLock("test-cluster", "test-nodepool-b")
+	if err != nil {
+		t.Fatalf("different nodepool should acquire lock: %v", err)
+	}
+	defer releaseDrainRunLock(context.Background(), otherLockFile)
+}
+
+func TestLocalDrainRunLockReleaseIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	lockFile, err := acquireLocalDrainRunLock("test-cluster", "test-idempotent-nodepool")
+	if err != nil {
+		t.Fatalf("acquireDrainRunLock failed: %v", err)
+	}
+
+	releaseDrainRunLock(ctx, lockFile)
+	releaseDrainRunLock(ctx, lockFile)
+}
+
+func TestAcquireKubernetesDrainRunLockBlocksDuplicate(t *testing.T) {
+	ctx := context.Background()
+	clientSet := fake.NewSimpleClientset()
+
+	lock, err := acquireDrainRunLock(ctx, clientSet, "test-cluster", "test-nodepool", "kubernetes", "default", "10m")
+	if err != nil {
+		t.Fatalf("acquireDrainRunLock kubernetes failed: %v", err)
+	}
+	defer releaseDrainRunLock(ctx, lock)
+
+	duplicateLock, err := acquireDrainRunLock(ctx, clientSet, "test-cluster", "test-nodepool", "kubernetes", "default", "10m")
+	if err == nil {
+		releaseDrainRunLock(ctx, duplicateLock)
+		t.Fatal("expected duplicate kubernetes lock error, got nil")
+	}
+	if !strings.Contains(err.Error(), "이미 동일 cluster/nodepool 드레인이 실행 중입니다") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestKubernetesDrainRunLockReleaseDeletesLease(t *testing.T) {
+	ctx := context.Background()
+	clientSet := fake.NewSimpleClientset()
+
+	lock, err := acquireDrainRunLock(ctx, clientSet, "test-cluster", "test-nodepool", "kubernetes", "default", "10m")
+	if err != nil {
+		t.Fatalf("acquireDrainRunLock kubernetes failed: %v", err)
+	}
+	releaseDrainRunLock(ctx, lock)
+
+	leaseName := kubernetesDrainLockLeaseName("test-cluster", "test-nodepool")
+	_, err = clientSet.CoordinationV1().Leases("default").Get(ctx, leaseName, metaV1.GetOptions{})
+	if err == nil {
+		t.Fatal("expected released lease to be deleted")
+	}
+
+	nextLock, err := acquireDrainRunLock(ctx, clientSet, "test-cluster", "test-nodepool", "kubernetes", "default", "10m")
+	if err != nil {
+		t.Fatalf("expected lock reacquire after release: %v", err)
+	}
+	defer releaseDrainRunLock(ctx, nextLock)
+}
+
+func TestKubernetesDrainRunLockReleaseIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	clientSet := fake.NewSimpleClientset()
+
+	lock, err := acquireDrainRunLock(ctx, clientSet, "test-cluster", "test-idempotent-nodepool", "kubernetes", "default", "10m")
+	if err != nil {
+		t.Fatalf("acquireDrainRunLock kubernetes failed: %v", err)
+	}
+
+	releaseDrainRunLock(ctx, lock)
+	releaseDrainRunLock(ctx, lock)
+}
+
+func TestWriteNodeDrainReportJSON(t *testing.T) {
+	var buf bytes.Buffer
+	report := types.NodeDrainReport{
+		Results: []types.NodeDrainResult{
+			{
+				NodeName: "node-1",
+				Success:  true,
+			},
+		},
+		Summary: types.NodeDrainSummary{
+			TargetNodepool:         "test-nodepool",
+			TotalNodesInNodepool:   3,
+			PlannedDrainNodeCount:  1,
+			SelectedDrainNodeCount: 1,
+			SuccessfulNodeCount:    1,
+		},
+	}
+
+	if err := writeNodeDrainReport(&buf, report, "json"); err != nil {
+		t.Fatalf("writeNodeDrainReport failed: %v", err)
+	}
+	for _, want := range []string{
+		`"node_name": "node-1"`,
+		`"target_nodepool": "test-nodepool"`,
+		`"selected_drain_node_count": 1`,
+	} {
+		if !strings.Contains(buf.String(), want) {
+			t.Fatalf("json output missing %q: %s", want, buf.String())
+		}
+	}
+}
+
+func TestWriteNodeDrainReportTextNoop(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeNodeDrainReport(&buf, types.NodeDrainReport{}, "text"); err != nil {
+		t.Fatalf("writeNodeDrainReport text failed: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("text output should be noop, got: %s", buf.String())
+	}
+}
+
+func TestParseDrainOutputFormatRejectsInvalid(t *testing.T) {
+	if _, err := parseDrainOutputFormat("yaml"); err == nil {
+		t.Fatal("expected invalid output format error")
 	}
 }
 
@@ -78,6 +238,7 @@ func restoreCommandEnv(t *testing.T) {
 		"POD_EVICTION_MODE",
 		"POD_FORCE",
 		"POD_FORCE_PROBLEM_PODS",
+		"POD_DELETE_AFTER_EVICTION",
 		"POD_PDB_TOKEN",
 		"POD_PDB_TOKEN_MAX_IN_FLIGHT",
 		"POD_MAX_CONCURRENT",
@@ -110,10 +271,18 @@ func snapshotCommandGlobals() func() {
 	origDrainSafetyQueries := drainSafetyQueries
 	origDrainSafetyFailClosed := drainSafetyFailClosed
 	origDrainProgressive := drainProgressive
+	origDrainDryRun := drainDryRun
+	origDrainLockMode := drainLockMode
+	origDrainLockNamespace := drainLockNamespace
+	origDrainLockLeaseDuration := drainLockLeaseDuration
+	origDrainNodeSelectionStrategy := drainNodeSelectionStrategy
+	origDrainSkipUnschedulable := drainSkipUnschedulable
+	origDrainOutputFormat := drainOutputFormat
 
 	origPodEvictionMode := podEvictionMode
 	origPodForce := podForce
 	origPodForceProblemPods := podForceProblemPods
+	origPodDeleteAfterEviction := podDeleteAfterEviction
 	origPodPDBToken := podPDBToken
 	origPodPDBTokenMaxInFlight := podPDBTokenMaxInFlight
 	origPodMaxConcurrent := podMaxConcurrent
@@ -141,10 +310,18 @@ func snapshotCommandGlobals() func() {
 		drainSafetyQueries = origDrainSafetyQueries
 		drainSafetyFailClosed = origDrainSafetyFailClosed
 		drainProgressive = origDrainProgressive
+		drainDryRun = origDrainDryRun
+		drainLockMode = origDrainLockMode
+		drainLockNamespace = origDrainLockNamespace
+		drainLockLeaseDuration = origDrainLockLeaseDuration
+		drainNodeSelectionStrategy = origDrainNodeSelectionStrategy
+		drainSkipUnschedulable = origDrainSkipUnschedulable
+		drainOutputFormat = origDrainOutputFormat
 
 		podEvictionMode = origPodEvictionMode
 		podForce = origPodForce
 		podForceProblemPods = origPodForceProblemPods
+		podDeleteAfterEviction = origPodDeleteAfterEviction
 		podPDBToken = origPodPDBToken
 		podPDBTokenMaxInFlight = origPodPDBTokenMaxInFlight
 		podMaxConcurrent = origPodMaxConcurrent

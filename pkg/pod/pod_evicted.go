@@ -40,8 +40,23 @@ type EvictionConfig struct {
 	EvictionMode        EvictionMode
 	Force               bool
 	ForceProblemPods    bool
+	DeleteAfterEviction bool
 	PDBToken            bool
 	PDBTokenMaxInFlight int
+}
+
+type podEvictionOutcome struct {
+	evicted          bool
+	deleted          bool
+	forceDeleted     bool
+	pdbBlocked       bool
+	forcedByFallback bool
+	problemForced    bool
+}
+
+type podEvictionResult struct {
+	outcome podEvictionOutcome
+	err     error
 }
 
 type pdbCache struct {
@@ -75,6 +90,7 @@ func DefaultEvictionConfig() *EvictionConfig {
 		EvictionMode:             EvictionModeEvict,
 		Force:                    false,
 		ForceProblemPods:         true,
+		DeleteAfterEviction:      false,
 		PDBToken:                 true,
 		PDBTokenMaxInFlight:      1,
 	}
@@ -82,6 +98,13 @@ func DefaultEvictionConfig() *EvictionConfig {
 
 // EvictPods evicts non-critical pods from a node with retry and concurrency control.
 func EvictPods(ctx context.Context, clientSet kubernetes.Interface, nodeName string, cfg *EvictionConfig) error {
+	_, err := EvictPodsWithReport(ctx, clientSet, nodeName, cfg)
+	return err
+}
+
+// EvictPodsWithReport evicts non-critical pods and returns aggregate pod-removal outcomes.
+func EvictPodsWithReport(ctx context.Context, clientSet kubernetes.Interface, nodeName string, cfg *EvictionConfig) (EvictionReport, error) {
+	report := EvictionReport{NodeName: nodeName}
 	cfg = normalizeEvictionConfig(cfg)
 	if ctx == nil {
 		ctx = context.Background()
@@ -97,8 +120,12 @@ func EvictPods(ctx context.Context, clientSet kubernetes.Interface, nodeName str
 
 	pods, err := GetNonCriticalPods(ctx, clientSet, nodeName)
 	if err != nil {
-		return fmt.Errorf("노드 %s 데몬셋 제외 파드 조회 실패: %w", nodeName, err)
+		return report, fmt.Errorf("노드 %s 데몬셋 제외 파드 조회 실패: %w", nodeName, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return report, err
+	}
+	report.TotalPods = len(pods)
 
 	var normalPods []coreV1.Pod
 	var problemPods []coreV1.Pod
@@ -113,7 +140,7 @@ func EvictPods(ctx context.Context, clientSet kubernetes.Interface, nodeName str
 
 	semaphore := make(chan struct{}, cfg.MaxConcurrentEvictions)
 	var wg sync.WaitGroup
-	errChan := make(chan error, len(normalPods))
+	resultChan := make(chan podEvictionResult, len(normalPods))
 
 	for _, p := range normalPods {
 		p := p
@@ -122,26 +149,41 @@ func EvictPods(ctx context.Context, clientSet kubernetes.Interface, nodeName str
 			defer wg.Done()
 			select {
 			case <-ctx.Done():
-				errChan <- ctx.Err()
+				resultChan <- podEvictionResult{err: ctx.Err()}
 				return
 			case semaphore <- struct{}{}:
 			}
 			defer func() { <-semaphore }()
-
-			if evictErr := evictPodWithRetry(ctx, clientSet, p, cfg); evictErr != nil {
-				errChan <- fmt.Errorf("파드 %s eviction 실패: %w", p.Name, evictErr)
+			if err := ctx.Err(); err != nil {
+				resultChan <- podEvictionResult{err: err}
+				return
 			}
+
+			outcome, evictErr := evictPodWithRetry(ctx, clientSet, p, cfg)
+			if evictErr != nil {
+				resultChan <- podEvictionResult{
+					outcome: outcome,
+					err:     fmt.Errorf("파드 %s eviction 실패: %w", p.Name, evictErr),
+				}
+				return
+			}
+			resultChan <- podEvictionResult{outcome: outcome}
 		}()
 	}
 
 	wg.Wait()
-	close(errChan)
+	close(resultChan)
 
 	var errs []error
-	for evictErr := range errChan {
-		if evictErr != nil && evictErr != context.Canceled && evictErr != context.DeadlineExceeded {
-			errs = append(errs, evictErr)
+	for result := range resultChan {
+		if result.err != nil {
+			if result.outcome.pdbBlocked {
+				report.PDBBlockedPods++
+			}
+			errs = append(errs, result.err)
+			continue
 		}
+		addPodEvictionOutcome(&report, result.outcome)
 	}
 
 	if len(problemPods) > 0 {
@@ -153,16 +195,46 @@ func EvictPods(ctx context.Context, clientSet kubernetes.Interface, nodeName str
 			})
 			if delErr != nil && !apierrors.IsNotFound(delErr) {
 				errs = append(errs, fmt.Errorf("문제 파드 %s 강제 제거 실패: %w", p.Name, delErr))
+				continue
 			}
+			addPodEvictionOutcome(&report, podEvictionOutcome{
+				deleted:       true,
+				forceDeleted:  true,
+				problemForced: true,
+			})
 		}
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("일부 파드 eviction 실패: %v", errs)
+		return report, fmt.Errorf("일부 파드 eviction 실패: %v", errs)
 	}
 
 	slog.Info("노드에서 pod evict 완료", "nodeName", nodeName)
-	return nil
+	return report, nil
+}
+
+func addPodEvictionOutcome(report *EvictionReport, outcome podEvictionOutcome) {
+	if report == nil {
+		return
+	}
+	if outcome.evicted {
+		report.EvictedPods++
+	}
+	if outcome.deleted {
+		report.DeletedPods++
+	}
+	if outcome.forceDeleted {
+		report.ForceDeletedPods++
+	}
+	if outcome.pdbBlocked {
+		report.PDBBlockedPods++
+	}
+	if outcome.forcedByFallback {
+		report.ForcedByFallback++
+	}
+	if outcome.problemForced {
+		report.ProblemPodsForced++
+	}
 }
 
 func normalizeEvictionConfig(cfg *EvictionConfig) *EvictionConfig {
@@ -208,8 +280,9 @@ func normalizeEvictionConfig(cfg *EvictionConfig) *EvictionConfig {
 	return &normalized
 }
 
-func evictPodWithRetry(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod, cfg *EvictionConfig) error {
+func evictPodWithRetry(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod, cfg *EvictionConfig) (podEvictionOutcome, error) {
 	var lastErr error
+	var lastOutcome podEvictionOutcome
 
 	if cfg.PDBToken {
 		podObj, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
@@ -228,7 +301,7 @@ func evictPodWithRetry(ctx context.Context, clientSet kubernetes.Interface, pod 
 		if retry > 0 {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return lastOutcome, ctx.Err()
 			case <-time.After(cfg.RetryBackoffDuration):
 			}
 		}
@@ -236,18 +309,21 @@ func evictPodWithRetry(ctx context.Context, clientSet kubernetes.Interface, pod 
 		if cfg.EvictionMode != EvictionModeDelete {
 			if err := checkPDB(ctx, clientSet, pod); err != nil {
 				lastErr = err
+				lastOutcome = podEvictionOutcome{pdbBlocked: true}
 				slog.Warn("PDB 체크 실패, 재시도 예정", "pod", pod.Name, "retry", retry+1, "error", err)
 				continue
 			}
 		}
 
-		if err := evictPod(ctx, clientSet, pod, cfg); err != nil {
+		outcome, err := evictPod(ctx, clientSet, pod, cfg)
+		if err != nil {
 			lastErr = err
+			lastOutcome = outcome
 			if cfg.EvictionMode == EvictionModeEvict && cfg.Force {
 				slog.Warn("eviction 실패로 delete 강제 전환", "pod", pod.Name, "retry", retry+1, "error", err)
 				forceErr := fallbackDeletePod(ctx, clientSet, pod, int64(0), metaV1.DeletePropagationBackground)
 				if forceErr == nil {
-					return nil
+					return podEvictionOutcome{deleted: true, forceDeleted: true}, nil
 				}
 				lastErr = fmt.Errorf("eviction 실패(%v), delete 강제 전환 실패(%w)", err, forceErr)
 			}
@@ -257,14 +333,15 @@ func evictPodWithRetry(ctx context.Context, clientSet kubernetes.Interface, pod 
 
 		if err := waitForPodDeletion(ctx, clientSet, pod, cfg); err != nil {
 			lastErr = err
+			lastOutcome = outcome
 			slog.Warn("Pod 삭제 대기 실패, 재시도 예정", "pod", pod.Name, "retry", retry+1, "error", err)
 			continue
 		}
 
-		return nil
+		return outcome, nil
 	}
 
-	return fmt.Errorf("최대 재시도 횟수 초과: %w", lastErr)
+	return lastOutcome, fmt.Errorf("최대 재시도 횟수 초과: %w", lastErr)
 }
 
 func checkPDB(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod) error {
@@ -322,14 +399,14 @@ func getPDBsWithCache(ctx context.Context, clientSet kubernetes.Interface, names
 	return pdbs, nil
 }
 
-func evictPod(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod, cfg *EvictionConfig) error {
+func evictPod(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod, cfg *EvictionConfig) (podEvictionOutcome, error) {
 	podObj, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		slog.Info("파드가 이미 제거됨", "pod", pod.Name)
-		return nil
+		return podEvictionOutcome{}, nil
 	}
 	if err != nil {
-		return fmt.Errorf("파드 상태 조회 실패: %w", err)
+		return podEvictionOutcome{}, fmt.Errorf("파드 상태 조회 실패: %w", err)
 	}
 
 	gracePeriod := int64(60)
@@ -341,7 +418,10 @@ func evictPod(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Po
 	propagationPolicy := metaV1.DeletePropagationOrphan
 
 	if cfg.EvictionMode == EvictionModeDelete {
-		return fallbackDeletePod(ctx, clientSet, pod, gracePeriod, propagationPolicy)
+		if err := fallbackDeletePod(ctx, clientSet, pod, gracePeriod, propagationPolicy); err != nil {
+			return podEvictionOutcome{}, err
+		}
+		return podEvictionOutcome{deleted: true}, nil
 	}
 
 	eviction := &policyv1.Eviction{
@@ -359,25 +439,35 @@ func evictPod(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Po
 	if err = clientSet.CoreV1().Pods(pod.Namespace).EvictV1(ctx, eviction); err != nil {
 		if apierrors.IsNotFound(err) {
 			slog.Info("파드가 이미 제거됨", "pod", pod.Name)
-			return nil
+			return podEvictionOutcome{}, nil
 		}
 
 		if shouldFallbackToDelete(err) {
-			return fallbackDeletePod(ctx, clientSet, pod, gracePeriod, propagationPolicy)
+			if err := fallbackDeletePod(ctx, clientSet, pod, gracePeriod, propagationPolicy); err != nil {
+				return podEvictionOutcome{}, err
+			}
+			return podEvictionOutcome{deleted: true, forcedByFallback: true}, nil
 		}
-		return err
+		return podEvictionOutcome{}, err
 	}
 
-	// Eviction accepted after PDB checks; issue a best-effort delete so fake clients and
-	// non-standard API servers converge quickly.
+	outcome := podEvictionOutcome{evicted: true}
+	if !cfg.DeleteAfterEviction {
+		return outcome, nil
+	}
+
+	// Optional compatibility mode for fake clients or non-standard API servers that accept
+	// eviction but do not progress pod deletion.
 	deleteErr := clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metaV1.DeleteOptions{
 		GracePeriodSeconds: &gracePeriod,
 		PropagationPolicy:  &propagationPolicy,
 	})
 	if deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
 		slog.Warn("eviction 이후 delete 보정 실패", "pod", pod.Name, "error", deleteErr)
+		return outcome, nil
 	}
-	return nil
+	outcome.deleted = true
+	return outcome, nil
 }
 
 func shouldFallbackToDelete(err error) bool {
@@ -537,6 +627,12 @@ func GetNonCriticalPods(ctx context.Context, clientSet kubernetes.Interface, nod
 
 	pods := make([]coreV1.Pod, 0, len(podList.Items))
 	for _, p := range podList.Items {
+		if p.Spec.NodeName != nodeName {
+			continue
+		}
+		if p.Status.Phase == coreV1.PodSucceeded || p.Status.Phase == coreV1.PodFailed {
+			continue
+		}
 		if !isManagedByDaemonSet(p) {
 			pods = append(pods, p)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func TestEvictPods(t *testing.T) {
 					},
 				},
 			},
-			config:        DefaultEvictionConfig(),
+			config:        evictionConfigWithDeleteAfterEvictionForTest(),
 			expectedError: false,
 			setupPDB:      false,
 		},
@@ -68,6 +69,157 @@ func TestEvictPods(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEvictPodsWithReportCountsEvictionAndCompatibilityDelete(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	pod := &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "pod-1",
+			Namespace: "default",
+		},
+		Spec: coreV1.PodSpec{
+			NodeName: "node-1",
+		},
+	}
+	_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	report, err := EvictPodsWithReport(context.Background(), client, "node-1", evictionConfigWithDeleteAfterEvictionForTest())
+	assert.NoError(t, err)
+	assert.Equal(t, 1, report.TotalPods)
+	assert.Equal(t, 1, report.EvictedPods)
+	assert.Equal(t, 1, report.DeletedPods)
+	assert.Equal(t, 0, report.ForceDeletedPods)
+	assert.Equal(t, 0, report.PDBBlockedPods)
+}
+
+func TestEvictPodsWithReportCountsDeleteMode(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	pod := &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "pod-1",
+			Namespace: "default",
+		},
+		Spec: coreV1.PodSpec{
+			NodeName: "node-1",
+		},
+	}
+	_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	cfg := evictionConfigWithDeleteAfterEvictionForTest()
+	cfg.EvictionMode = EvictionModeDelete
+	cfg.DeleteAfterEviction = false
+
+	report, err := EvictPodsWithReport(context.Background(), client, "node-1", cfg)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, report.TotalPods)
+	assert.Equal(t, 0, report.EvictedPods)
+	assert.Equal(t, 1, report.DeletedPods)
+	assert.Equal(t, 0, report.ForcedByFallback)
+}
+
+func TestEvictPodsWithReportCountsPDBBlockedPod(t *testing.T) {
+	resetPDBCacheForTest()
+
+	client := fake.NewSimpleClientset()
+	pod := &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "pod-with-pdb",
+			Namespace: "default",
+			Labels: map[string]string{
+				"app": "test",
+			},
+		},
+		Spec: coreV1.PodSpec{
+			NodeName: "node-1",
+		},
+	}
+	_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	pdb := &policyv1.PodDisruptionBudget{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "test-pdb",
+			Namespace: "default",
+		},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MinAvailable: &intstr.IntOrString{Type: intstr.Int, IntVal: 1},
+			Selector: &metaV1.LabelSelector{
+				MatchLabels: map[string]string{"app": "test"},
+			},
+		},
+		Status: policyv1.PodDisruptionBudgetStatus{
+			DisruptionsAllowed: 0,
+		},
+	}
+	_, err = client.PolicyV1().PodDisruptionBudgets("default").Create(context.Background(), pdb, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	report, err := EvictPodsWithReport(context.Background(), client, "node-1", evictionConfigWithDeleteAfterEvictionForTest())
+	assert.Error(t, err)
+	assert.Equal(t, 1, report.TotalPods)
+	assert.Equal(t, 1, report.PDBBlockedPods)
+	assert.Equal(t, 0, report.EvictedPods)
+}
+
+func TestEvictPodsWithReportCountsProblemPodForceDelete(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	oldPendingTime := metaV1.NewTime(time.Now().Add(-11 * time.Minute))
+	problemPod := &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:              "problem-pod",
+			Namespace:         "default",
+			CreationTimestamp: oldPendingTime,
+		},
+		Spec: coreV1.PodSpec{
+			NodeName: "node-1",
+		},
+		Status: coreV1.PodStatus{
+			Phase: coreV1.PodPending,
+		},
+	}
+	_, err := client.CoreV1().Pods(problemPod.Namespace).Create(context.Background(), problemPod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	report, err := EvictPodsWithReport(context.Background(), client, "node-1", evictionConfigWithDeleteAfterEvictionForTest())
+	assert.NoError(t, err)
+	assert.Equal(t, 1, report.TotalPods)
+	assert.Equal(t, 1, report.DeletedPods)
+	assert.Equal(t, 1, report.ForceDeletedPods)
+	assert.Equal(t, 1, report.ProblemPodsForced)
+}
+
+func TestEvictPodsWithReportReturnsContextError(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	pod := &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "pod-1",
+			Namespace: "default",
+		},
+		Spec: coreV1.PodSpec{
+			NodeName: "node-1",
+		},
+	}
+	_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = EvictPodsWithReport(ctx, client, "node-1", evictionConfigWithDeleteAfterEvictionForTest())
+	if err == nil {
+		t.Fatal("expected context cancellation error")
+	}
+	assert.True(t, strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context deadline exceeded"), err.Error())
+}
+
+func TestGetEvictionConfigFromEnvParsesDeleteAfterEviction(t *testing.T) {
+	t.Setenv("POD_DELETE_AFTER_EVICTION", "true")
+
+	cfg := GetEvictionConfigFromEnv()
+	assert.True(t, cfg.DeleteAfterEviction)
 }
 
 // 별도의 PDB 테스트 케이스
@@ -216,7 +368,7 @@ func TestEvictPod(t *testing.T) {
 			}
 
 			// evictPod 테스트
-			err := evictPod(context.Background(), client, tt.pod, DefaultEvictionConfig())
+			_, err := evictPod(context.Background(), client, tt.pod, DefaultEvictionConfig())
 
 			if (err != nil) != tt.expectedError {
 				t.Errorf("evictPod() error = %v, expectedError %v", err, tt.expectedError)
@@ -242,7 +394,7 @@ func TestWaitForPodDeletion(t *testing.T) {
 					Namespace: "default",
 				},
 			},
-			config:        DefaultEvictionConfig(),
+			config:        evictionConfigWithDeleteAfterEvictionForTest(),
 			deletePod:     true,
 			expectedError: false,
 		},
@@ -269,7 +421,7 @@ func TestWaitForPodDeletion(t *testing.T) {
 					Namespace: "default",
 				},
 			},
-			config:        DefaultEvictionConfig(),
+			config:        evictionConfigWithDeleteAfterEvictionForTest(),
 			deletePod:     false, // 파드를 생성하지 않음
 			expectedError: false,
 		},
@@ -367,6 +519,44 @@ func TestWaitForPodDeletion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEvictPodDoesNotDeleteAfterSuccessfulEvictionByDefault(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	pod := coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "evicted-pod",
+			Namespace: "default",
+		},
+	}
+
+	_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), &pod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	_, err = evictPod(context.Background(), client, pod, DefaultEvictionConfig())
+	assert.NoError(t, err)
+
+	_, err = client.CoreV1().Pods(pod.Namespace).Get(context.Background(), pod.Name, metaV1.GetOptions{})
+	assert.NoError(t, err)
+}
+
+func TestEvictPodCanDeleteAfterSuccessfulEvictionWhenEnabled(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	pod := coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "evicted-pod",
+			Namespace: "default",
+		},
+	}
+
+	_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), &pod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	_, err = evictPod(context.Background(), client, pod, evictionConfigWithDeleteAfterEvictionForTest())
+	assert.NoError(t, err)
+
+	_, err = client.CoreV1().Pods(pod.Namespace).Get(context.Background(), pod.Name, metaV1.GetOptions{})
+	assert.Error(t, err)
 }
 
 func TestIsBatchJob(t *testing.T) {
@@ -515,10 +705,22 @@ func TestGetNonCriticalPods(t *testing.T) {
 		},
 	}
 
+	otherNodePod := &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "other-node-pod",
+			Namespace: "default",
+		},
+		Spec: coreV1.PodSpec{
+			NodeName: "other-node",
+		},
+	}
+
 	// 파드 생성
 	_, err := clientset.CoreV1().Pods("default").Create(context.Background(), normalPod, metaV1.CreateOptions{})
 	assert.NoError(t, err)
 	_, err = clientset.CoreV1().Pods("default").Create(context.Background(), daemonSetPod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+	_, err = clientset.CoreV1().Pods("default").Create(context.Background(), otherNodePod, metaV1.CreateOptions{})
 	assert.NoError(t, err)
 
 	// GetNonCriticalPods 테스트
@@ -544,7 +746,7 @@ func TestEvictPodWithRetry(t *testing.T) {
 					Namespace: "default",
 				},
 			},
-			config:        DefaultEvictionConfig(),
+			config:        evictionConfigWithDeleteAfterEvictionForTest(),
 			podExists:     true,
 			expectedError: false,
 		},
@@ -575,7 +777,7 @@ func TestEvictPodWithRetry(t *testing.T) {
 			}
 
 			// evictPodWithRetry 테스트
-			err := evictPodWithRetry(context.Background(), client, tt.pod, tt.config)
+			_, err := evictPodWithRetry(context.Background(), client, tt.pod, tt.config)
 
 			if (err != nil) != tt.expectedError {
 				t.Errorf("evictPodWithRetry() error = %v, expectedError %v", err, tt.expectedError)
@@ -659,7 +861,7 @@ func TestEvictProblemPods(t *testing.T) {
 	assert.True(t, isPodInProblemState(problemPod))
 
 	// evictPod 함수 테스트 (강제 삭제 옵션 사용)
-	err = evictPod(context.Background(), client, *problemPod, DefaultEvictionConfig())
+	_, err = evictPod(context.Background(), client, *problemPod, DefaultEvictionConfig())
 	assert.NoError(t, err)
 }
 
@@ -676,7 +878,7 @@ func TestEvictPodReturnsErrorOnGetFailure(t *testing.T) {
 		},
 	}
 
-	err := evictPod(context.Background(), client, pod, DefaultEvictionConfig())
+	_, err := evictPod(context.Background(), client, pod, DefaultEvictionConfig())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "파드 상태 조회 실패")
 }
@@ -685,6 +887,16 @@ func resetPDBCacheForTest() {
 	globalPDBCache.Lock()
 	defer globalPDBCache.Unlock()
 	globalPDBCache.cache = make(map[string]pdbCacheEntry)
+}
+
+func evictionConfigWithDeleteAfterEvictionForTest() *EvictionConfig {
+	cfg := DefaultEvictionConfig()
+	cfg.DeleteAfterEviction = true
+	cfg.MaxRetries = 1
+	cfg.RetryBackoffDuration = time.Millisecond
+	cfg.PodDeletionTimeout = time.Second
+	cfg.CheckInterval = 10 * time.Millisecond
+	return cfg
 }
 
 func newTestPDB(namespace, name string) *policyv1.PodDisruptionBudget {

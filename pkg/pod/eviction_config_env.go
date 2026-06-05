@@ -31,6 +31,12 @@ func GetEvictionConfigFromEnv() *EvictionConfig {
 		}
 	}
 
+	if v := strings.TrimSpace(os.Getenv("POD_DELETE_AFTER_EVICTION")); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.DeleteAfterEviction = b
+		}
+	}
+
 	if v := strings.TrimSpace(os.Getenv("POD_PDB_TOKEN")); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.PDBToken = b

@@ -23,6 +23,15 @@ type allocateRateProvider interface {
 	GetAllocateRate(ctx context.Context, resourceType string) (int, error)
 }
 
+type DrainNodeSelectionStrategy string
+
+const (
+	DrainNodeSelectionOldest     DrainNodeSelectionStrategy = "oldest"
+	DrainNodeSelectionEmptyFirst DrainNodeSelectionStrategy = "empty-first"
+	DrainNodeSelectionLeastPods  DrainNodeSelectionStrategy = "least-pods"
+	DrainNodeSelectionMostPods   DrainNodeSelectionStrategy = "most-pods"
+)
+
 // DrainDependencies defines external dependencies for node drain.
 type DrainDependencies struct {
 	AllocateRateProvider allocateRateProvider
@@ -31,48 +40,71 @@ type DrainDependencies struct {
 
 // DrainConfig defines node drain behavior.
 type DrainConfig struct {
-	NodepoolName string
-	Eviction     *pod.EvictionConfig
+	NodepoolName          string
+	Eviction              *pod.EvictionConfig
+	DryRun                bool
+	NodeSelectionStrategy DrainNodeSelectionStrategy
+	SkipUnschedulable     bool
 }
 
 // DefaultDrainConfig returns default drain settings.
 func DefaultDrainConfig(nodepoolName string) DrainConfig {
 	return DrainConfig{
-		NodepoolName: nodepoolName,
-		Eviction:     pod.DefaultEvictionConfig(),
+		NodepoolName:          nodepoolName,
+		Eviction:              pod.DefaultEvictionConfig(),
+		NodeSelectionStrategy: DrainNodeSelectionOldest,
 	}
 }
 
 // NodeDrain cordons and drains selected nodes from a nodepool.
 func NodeDrain(ctx context.Context, clientSet kubernetes.Interface, deps DrainDependencies, cfg DrainConfig) ([]types.NodeDrainResult, error) {
+	report, err := NodeDrainWithReport(ctx, clientSet, deps, cfg)
+	return report.Results, err
+}
+
+// NodeDrainWithReport cordons and drains selected nodes from a nodepool and returns aggregate execution metadata.
+func NodeDrainWithReport(ctx context.Context, clientSet kubernetes.Interface, deps DrainDependencies, cfg DrainConfig) (types.NodeDrainReport, error) {
+	report := types.NodeDrainReport{}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	cfg.Eviction = normalizeDrainEvictionConfig(cfg.Eviction)
 	if cfg.NodepoolName == "" {
-		return nil, fmt.Errorf("nodepool name is required")
+		return report, fmt.Errorf("nodepool name is required")
 	}
+	report.Summary.TargetNodepool = cfg.NodepoolName
+	report.Summary.DryRun = cfg.DryRun
 	if deps.AllocateRateProvider == nil {
-		return nil, fmt.Errorf("allocate rate provider is required")
+		return report, fmt.Errorf("allocate rate provider is required")
+	}
+	if _, err := parseNodeSelectionStrategy(cfg.NodeSelectionStrategy); err != nil {
+		return report, err
 	}
 
 	nodepoolNodes, err := getNodepoolNodes(ctx, clientSet, cfg.NodepoolName)
 	if err != nil {
-		return nil, err
+		return report, err
 	}
-
-	sort.Slice(nodepoolNodes, func(i, j int) bool {
-		return nodepoolNodes[i].CreationTimestamp.Before(&nodepoolNodes[j].CreationTimestamp)
-	})
+	report.Summary.TotalNodesInNodepool = len(nodepoolNodes)
 
 	drainNodeCount, err := getDrainNodeCount(ctx, deps, len(nodepoolNodes))
 	if err != nil {
-		return nil, err
+		return report, err
 	}
+	report.Summary.PlannedDrainNodeCount = drainNodeCount
 	slog.Info("드레인 할 노드 개수", "drainNodeCount", drainNodeCount)
 
-	nodesToDrain := nodepoolNodes[:drainNodeCount]
-	return handleDrain(ctx, clientSet, nodesToDrain, deps, cfg)
+	nodesToDrain, err := selectNodesToDrain(ctx, clientSet, nodepoolNodes, drainNodeCount, cfg)
+	if err != nil {
+		return report, err
+	}
+	report.Summary.SelectedDrainNodeCount = len(nodesToDrain)
+	slog.Info("선택된 드레인 대상 노드", "strategy", normalizeNodeSelectionStrategy(cfg.NodeSelectionStrategy), "requested", drainNodeCount, "selected", len(nodesToDrain))
+
+	results, err := handleDrain(ctx, clientSet, nodesToDrain, deps, cfg, &report.Summary)
+	report.Results = results
+	finalizeNodeDrainSummary(&report.Summary, results)
+	return report, err
 }
 
 func getNodepoolNodes(ctx context.Context, clientSet kubernetes.Interface, nodepoolName string) ([]coreV1.Node, error) {
@@ -133,7 +165,117 @@ func getDrainNodeCount(ctx context.Context, deps DrainDependencies, lenNodes int
 	return drainNodeCount, nil
 }
 
-func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []coreV1.Node, deps DrainDependencies, cfg DrainConfig) ([]types.NodeDrainResult, error) {
+func selectNodesToDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []coreV1.Node, drainNodeCount int, cfg DrainConfig) ([]coreV1.Node, error) {
+	if drainNodeCount <= 0 || len(nodes) == 0 {
+		return []coreV1.Node{}, nil
+	}
+
+	strategy, err := parseNodeSelectionStrategy(cfg.NodeSelectionStrategy)
+	if err != nil {
+		return nil, err
+	}
+
+	candidates := make([]coreV1.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if strings.TrimSpace(n.Labels["karpenter.sh/nodepool"]) != cfg.NodepoolName {
+			continue
+		}
+		if cfg.SkipUnschedulable && n.Spec.Unschedulable {
+			slog.Info("이미 cordon된 노드를 드레인 후보에서 제외", "nodeName", n.Name)
+			continue
+		}
+		candidates = append(candidates, n)
+	}
+
+	switch strategy {
+	case DrainNodeSelectionOldest:
+		sortNodesByAge(candidates)
+	case DrainNodeSelectionEmptyFirst, DrainNodeSelectionLeastPods, DrainNodeSelectionMostPods:
+		sortedNodes, sortErr := sortNodesByPodCount(ctx, clientSet, candidates, strategy)
+		if sortErr != nil {
+			return nil, sortErr
+		}
+		candidates = sortedNodes
+	}
+
+	if drainNodeCount > len(candidates) {
+		drainNodeCount = len(candidates)
+	}
+	return candidates[:drainNodeCount], nil
+}
+
+func parseNodeSelectionStrategy(strategy DrainNodeSelectionStrategy) (DrainNodeSelectionStrategy, error) {
+	switch DrainNodeSelectionStrategy(strings.ToLower(strings.TrimSpace(string(strategy)))) {
+	case "", DrainNodeSelectionOldest:
+		return DrainNodeSelectionOldest, nil
+	case DrainNodeSelectionEmptyFirst:
+		return DrainNodeSelectionEmptyFirst, nil
+	case DrainNodeSelectionLeastPods:
+		return DrainNodeSelectionLeastPods, nil
+	case DrainNodeSelectionMostPods:
+		return DrainNodeSelectionMostPods, nil
+	default:
+		return "", fmt.Errorf("지원하지 않는 드레인 노드 선택 전략: %s", strategy)
+	}
+}
+
+func normalizeNodeSelectionStrategy(strategy DrainNodeSelectionStrategy) DrainNodeSelectionStrategy {
+	parsed, err := parseNodeSelectionStrategy(strategy)
+	if err != nil {
+		return strategy
+	}
+	return parsed
+}
+
+func sortNodesByAge(nodes []coreV1.Node) {
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].CreationTimestamp.Equal(&nodes[j].CreationTimestamp) {
+			return nodes[i].Name < nodes[j].Name
+		}
+		return nodes[i].CreationTimestamp.Before(&nodes[j].CreationTimestamp)
+	})
+}
+
+type nodeDrainCandidate struct {
+	node     coreV1.Node
+	podCount int
+}
+
+func sortNodesByPodCount(ctx context.Context, clientSet kubernetes.Interface, nodes []coreV1.Node, strategy DrainNodeSelectionStrategy) ([]coreV1.Node, error) {
+	candidates := make([]nodeDrainCandidate, 0, len(nodes))
+	for _, n := range nodes {
+		pods, err := pod.GetNonCriticalPods(ctx, clientSet, n.Name)
+		if err != nil {
+			return nil, fmt.Errorf("노드 %s 파드 수 조회 실패: %w", n.Name, err)
+		}
+		candidates = append(candidates, nodeDrainCandidate{
+			node:     n,
+			podCount: len(pods),
+		})
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].podCount != candidates[j].podCount {
+			if strategy == DrainNodeSelectionMostPods {
+				return candidates[i].podCount > candidates[j].podCount
+			}
+			return candidates[i].podCount < candidates[j].podCount
+		}
+		if candidates[i].node.CreationTimestamp.Equal(&candidates[j].node.CreationTimestamp) {
+			return candidates[i].node.Name < candidates[j].node.Name
+		}
+		return candidates[i].node.CreationTimestamp.Before(&candidates[j].node.CreationTimestamp)
+	})
+
+	sortedNodes := make([]coreV1.Node, 0, len(candidates))
+	for _, c := range candidates {
+		slog.Info("드레인 후보 노드 평가", "nodeName", c.node.Name, "podCount", c.podCount, "strategy", strategy)
+		sortedNodes = append(sortedNodes, c.node)
+	}
+	return sortedNodes, nil
+}
+
+func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []coreV1.Node, deps DrainDependencies, cfg DrainConfig, summary *types.NodeDrainSummary) ([]types.NodeDrainResult, error) {
 	results := make([]types.NodeDrainResult, 0, len(nodes))
 	opts := GetDrainPolicyOptionsFromEnv()
 	progressive := parseEnvBool("DRAIN_PROGRESSIVE", true)
@@ -151,6 +293,23 @@ func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []co
 			NodepoolName: cfg.NodepoolName,
 			Age:          n.CreationTimestamp.Format(time.RFC3339),
 			StartedAt:    start.Format(time.RFC3339),
+			DryRun:       cfg.DryRun,
+		}
+
+		if cfg.DryRun {
+			plannedPods, planErr := getNodeDrainPodPlan(ctx, clientSet, n.Name)
+			result.PlannedPods = plannedPods
+			result.DurationSeconds = int64(time.Since(start).Seconds())
+			if planErr != nil {
+				result.Success = false
+				result.FailureReason = planErr.Error()
+				results = append(results, result)
+				return results, fmt.Errorf("노드 %s dry-run 계획 생성 실패: %w", n.Name, planErr)
+			}
+			result.Success = true
+			results = append(results, result)
+			slog.Info("dry-run 노드 드레인 계획", "nodeName", n.Name, "plannedPods", len(plannedPods))
+			continue
 		}
 
 		if err := CordonNode(ctx, clientSet, n.Name); err != nil {
@@ -161,7 +320,9 @@ func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []co
 			return results, fmt.Errorf("노드 %s cordon 실패: %w", n.Name, err)
 		}
 
-		if err := drainSingleNode(ctx, clientSet, n.Name, cfg.Eviction); err != nil {
+		podReport, err := drainSingleNode(ctx, clientSet, n.Name, cfg.Eviction)
+		addPodEvictionReportToSummary(summary, podReport)
+		if err != nil {
 			result.Success = false
 			result.FailureReason = err.Error()
 			result.DurationSeconds = int64(time.Since(start).Seconds())
@@ -175,12 +336,16 @@ func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []co
 
 		if shouldSafetyRecheck && i < len(nodes)-1 {
 			memoryAllocateRate, memErr := deps.AllocateRateProvider.GetAllocateRate(ctx, "memory")
-			if memErr != nil {
-				slog.Warn("안전 재평가 중 Memory allocate rate 조회 실패(계속 진행)", "error", memErr)
-			}
 			cpuAllocateRate, cpuErr := deps.AllocateRateProvider.GetAllocateRate(ctx, "cpu")
-			if cpuErr != nil {
-				slog.Warn("안전 재평가 중 CPU allocate rate 조회 실패(계속 진행)", "error", cpuErr)
+			if memErr != nil || cpuErr != nil {
+				if opts.SafetyFailClosed {
+					reason := fmt.Sprintf("안전 재평가 실패: memoryError=%v cpuError=%v", memErr, cpuErr)
+					markDrainStoppedBySafety(summary, reason)
+					slog.Warn("안전 재평가 실패로 추가 드레인을 중단합니다.", "memoryError", memErr, "cpuError", cpuErr)
+					break
+				}
+				slog.Warn("안전 재평가 실패를 fail-open으로 처리합니다.", "memoryError", memErr, "cpuError", cpuErr)
+				continue
 			}
 
 			maxRate := int(math.Max(float64(memoryAllocateRate), float64(cpuAllocateRate)))
@@ -189,6 +354,7 @@ func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []co
 				slog.Warn("안전 재평가 중 오류", "error", safetyErr, "blocked", blocked, "reason", reason)
 			}
 			if blocked {
+				markDrainStoppedBySafety(summary, reason)
 				slog.Warn("안전 조건에 의해 추가 드레인을 중단합니다.", "reason", reason)
 				break
 			}
@@ -196,12 +362,13 @@ func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []co
 	}
 
 	memoryAllocateRate, err := deps.AllocateRateProvider.GetAllocateRate(ctx, "memory")
-	if err != nil {
-		return results, err
-	}
+	memErr := err
 	cpuAllocateRate, err := deps.AllocateRateProvider.GetAllocateRate(ctx, "cpu")
-	if err != nil {
-		return results, err
+	cpuErr := err
+	if memErr != nil || cpuErr != nil {
+		appendDrainSummaryWarning(summary, fmt.Sprintf("최종 Karpenter 사용률 조회 실패: memoryError=%v cpuError=%v", memErr, cpuErr))
+		slog.Warn("최종 Karpenter 사용률 조회 실패", "memoryError", memErr, "cpuError", cpuErr)
+		return results, nil
 	}
 
 	slog.Info("Memory 사용률", "memoryAllocateRate", memoryAllocateRate)
@@ -216,15 +383,116 @@ func handleDrain(ctx context.Context, clientSet kubernetes.Interface, nodes []co
 	return results, nil
 }
 
-func drainSingleNode(ctx context.Context, clientSet kubernetes.Interface, nodeName string, cfg *pod.EvictionConfig) error {
+func finalizeNodeDrainSummary(summary *types.NodeDrainSummary, results []types.NodeDrainResult) {
+	if summary == nil {
+		return
+	}
+
+	errorReasons := make([]string, 0)
+	for _, result := range results {
+		if result.Success {
+			summary.SuccessfulNodeCount++
+			if !result.DryRun {
+				summary.DrainedNodeCount++
+			}
+		} else {
+			summary.FailedNodeCount++
+			if result.FailureReason != "" {
+				errorReasons = append(errorReasons, result.FailureReason)
+			}
+		}
+		if result.DryRun {
+			summary.PlannedPodCount += len(result.PlannedPods)
+			summary.TotalPods += len(result.PlannedPods)
+		}
+	}
+	summary.TopErrorReasons = topUniqueStrings(errorReasons, 3)
+}
+
+func addPodEvictionReportToSummary(summary *types.NodeDrainSummary, report pod.EvictionReport) {
+	if summary == nil {
+		return
+	}
+	summary.TotalPods += report.TotalPods
+	summary.EvictedPods += report.EvictedPods
+	summary.DeletedPods += report.DeletedPods
+	summary.ForceDeletedPods += report.ForceDeletedPods
+	summary.PDBBlockedPods += report.PDBBlockedPods
+	summary.ForcedByFallback += report.ForcedByFallback
+	summary.ProblemPodsForced += report.ProblemPodsForced
+}
+
+func markDrainStoppedBySafety(summary *types.NodeDrainSummary, reason string) {
+	if summary == nil {
+		return
+	}
+	summary.StoppedBySafety = true
+	summary.StopSafetyReason = reason
+}
+
+func appendDrainSummaryWarning(summary *types.NodeDrainSummary, warning string) {
+	if summary == nil || strings.TrimSpace(warning) == "" {
+		return
+	}
+	summary.Warnings = append(summary.Warnings, warning)
+}
+
+func topUniqueStrings(values []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, limit)
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func getNodeDrainPodPlan(ctx context.Context, clientSet kubernetes.Interface, nodeName string) ([]types.NodeDrainPodPlan, error) {
+	pods, err := pod.GetNonCriticalPods(ctx, clientSet, nodeName)
+	if err != nil {
+		return nil, err
+	}
+
+	plans := make([]types.NodeDrainPodPlan, 0, len(pods))
+	for _, p := range pods {
+		plan := types.NodeDrainPodPlan{
+			Namespace: p.Namespace,
+			Name:      p.Name,
+			Phase:     string(p.Status.Phase),
+		}
+		if len(p.OwnerReferences) > 0 {
+			plan.OwnerKind = p.OwnerReferences[0].Kind
+			plan.OwnerName = p.OwnerReferences[0].Name
+		}
+		plans = append(plans, plan)
+		slog.Info("dry-run 제거 대상 pod", "nodeName", nodeName, "namespace", plan.Namespace, "pod", plan.Name, "phase", plan.Phase, "ownerKind", plan.OwnerKind, "ownerName", plan.OwnerName)
+	}
+	return plans, nil
+}
+
+func drainSingleNode(ctx context.Context, clientSet kubernetes.Interface, nodeName string, cfg *pod.EvictionConfig) (pod.EvictionReport, error) {
 	cfg = normalizeDrainEvictionConfig(cfg)
 
-	if err := pod.EvictPods(ctx, clientSet, nodeName, cfg); err != nil {
-		return fmt.Errorf("노드 %s 파드 제거 실패: %w", nodeName, err)
+	report, err := pod.EvictPodsWithReport(ctx, clientSet, nodeName, cfg)
+	if err != nil {
+		return report, fmt.Errorf("노드 %s 파드 제거 실패: %w", nodeName, err)
 	}
 
 	if err := waitForPodsToTerminate(ctx, clientSet, nodeName, cfg); err != nil {
-		return fmt.Errorf("노드 %s 파드 종료 대기 실패: %w", nodeName, err)
+		return report, fmt.Errorf("노드 %s 파드 종료 대기 실패: %w", nodeName, err)
 	}
 
 	if cfg.PostEvictionNodeDelay > 0 {
@@ -232,12 +500,12 @@ func drainSingleNode(ctx context.Context, clientSet kubernetes.Interface, nodeNa
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return report, ctx.Err()
 		case <-timer.C:
 		}
 	}
 
-	return nil
+	return report, nil
 }
 
 func waitForPodsToTerminate(ctx context.Context, clientSet kubernetes.Interface, nodeName string, cfg *pod.EvictionConfig) error {

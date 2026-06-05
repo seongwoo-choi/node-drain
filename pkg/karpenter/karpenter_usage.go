@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/api"
@@ -68,25 +69,31 @@ func (p *PrometheusQuerier) Query(ctx context.Context, query string) (prometheus
 // Client provides Karpenter usage/allocation queries.
 type Client struct {
 	nodepoolName string
+	clusterName  string
 	querier      MetricsQuerier
 }
 
 // NewClient creates a Karpenter metrics client.
 func NewClient(nodepoolName string, querier MetricsQuerier) *Client {
+	return NewClientForCluster(nodepoolName, "", querier)
+}
+
+// NewClientForCluster creates a Karpenter metrics client scoped to a cluster when provided.
+func NewClientForCluster(nodepoolName string, clusterName string, querier MetricsQuerier) *Client {
 	return &Client{
 		nodepoolName: nodepoolName,
+		clusterName:  strings.TrimSpace(clusterName),
 		querier:      querier,
 	}
 }
 
 // GetKarpenterPodRequest returns pod request usage for a resource type.
 func (c *Client) GetKarpenterPodRequest(ctx context.Context, resourceType string) (float64, error) {
+	matchers := c.resourceLabelMatchers(resourceType)
 	query := fmt.Sprintf(
-		"sum(karpenter_nodes_total_pod_requests{nodepool='%s',resource_type='%s'} + karpenter_nodes_total_daemon_requests{nodepool='%s',resource_type='%s'})",
-		c.nodepoolName,
-		resourceType,
-		c.nodepoolName,
-		resourceType,
+		"sum(karpenter_nodes_total_pod_requests{%s} + karpenter_nodes_total_daemon_requests{%s})",
+		matchers,
+		matchers,
 	)
 	slog.Info("query", "query", query)
 
@@ -100,12 +107,12 @@ func (c *Client) GetKarpenterPodRequest(ctx context.Context, resourceType string
 // GetKarpenterNodepoolUsage returns nodepool usage for a resource type.
 func (c *Client) GetKarpenterNodepoolUsage(ctx context.Context, resourceType string) (float64, error) {
 	var emptyErr error
+	matchers := c.resourceLabelMatchers(resourceType)
 	for _, metricName := range nodepoolUsageMetricNames {
 		query := fmt.Sprintf(
-			"%s{nodepool='%s', resource_type='%s'}",
+			"%s{%s}",
 			metricName,
-			c.nodepoolName,
-			resourceType,
+			matchers,
 		)
 		slog.Info("query", "query", query)
 
@@ -124,6 +131,21 @@ func (c *Client) GetKarpenterNodepoolUsage(ctx context.Context, resourceType str
 		emptyErr = errors.New("empty prometheus result for nodepool usage")
 	}
 	return 0, emptyErr
+}
+
+func (c *Client) resourceLabelMatchers(resourceType string) string {
+	matchers := []string{
+		prometheusLabelMatcher("nodepool", c.nodepoolName),
+		prometheusLabelMatcher("resource_type", resourceType),
+	}
+	if c.clusterName != "" {
+		matchers = append(matchers, prometheusLabelMatcher("cluster", c.clusterName))
+	}
+	return strings.Join(matchers, ",")
+}
+
+func prometheusLabelMatcher(key string, value string) string {
+	return fmt.Sprintf("%s=%s", key, strconv.Quote(value))
 }
 
 // GetAllocateRate returns pod-request to nodepool-usage ratio in percent.

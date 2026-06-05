@@ -96,6 +96,8 @@ go run main.go drain \
   --drain-max-fraction 0.2 \
   --drain-safety-max-allocate-rate 90 \
   --drain-progressive true \
+  --drain-node-selection empty-first \
+  --drain-skip-unschedulable true \
   --pod-eviction-mode evict \
   --pdb-token true \
   --pdb-token-max-in-flight 1 \
@@ -104,6 +106,24 @@ go run main.go drain \
 
 > `--force`(eviction 실패 시 delete 폴백)은 기본 `false`를 권장합니다.  
 > 다만 운영 정책상 “어떤 상황에서도 끝까지 드레인해야 한다”면 `--force true`를 검토하세요.
+> `--pod-delete-after-eviction`은 기본 `false`를 유지하세요. eviction API가 성공했는데도 삭제가 진행되지 않는 비표준 API 서버나 테스트 fake client 대응용 옵션입니다.
+
+실제 실행 전에는 같은 옵션에 `--dry-run`을 추가해 계산된 드레인 노드 수와 제거 대상 pod를 먼저 확인하세요. `--dry-run`은 Prometheus/Kubernetes 조회만 수행하고 cordon/evict/delete는 실행하지 않습니다.
+
+```sh
+go run main.go drain \
+  --prometheus-address "http://localhost:8080/prometheus" \
+  --prometheus-org-id "organization-dev" \
+  --nodepool-name "worker-nodepool-name" \
+  --kube-config "local" \
+  --cluster-name "devel_eks_cluster" \
+  --drain-max-absolute 1 \
+  --drain-safety-max-allocate-rate 90 \
+  --drain-node-selection empty-first \
+  --drain-skip-unschedulable true \
+  --output json \
+  --dry-run
+```
 
 ---
 
@@ -148,6 +168,19 @@ go run main.go drain \
 | `--drain-safety-queries` | `""` | PromQL 목록(세미콜론/개행 구분). 하나라도 결과가 >0이면 0대로 강제 |
 | `--drain-safety-fail-closed` | `true` | 안전 쿼리 실패 시 0대로 강제할지 |
 | `--drain-progressive` | `true` | 점진적 드레인: 노드 1대 처리 후 안전 조건 재평가로 다음 노드 진행 여부를 결정 |
+| `--dry-run` | `false` | 실제 cordon/evict 없이 드레인 대상 노드와 제거 대상 pod만 계산 |
+| `--drain-lock-mode` | `local` | 중복 실행 lock 방식: `local`, `kubernetes`, `none` |
+| `--drain-lock-namespace` | `kube-system` | `kubernetes` lock 모드에서 Lease를 저장할 namespace |
+| `--drain-lock-lease-duration` | `10m` | `kubernetes` lock Lease 만료 시간. 실행 중 주기적으로 갱신됨 |
+| `--drain-node-selection` | `oldest` | 드레인 대상 노드 선택 전략: `oldest`, `empty-first`, `least-pods`, `most-pods` |
+| `--drain-skip-unschedulable` | `false` | 이미 cordon된 노드를 새 드레인 대상으로 선택하지 않음 |
+| `--output` | `text` | 결과 출력 형식. `json`을 지정하면 `results`와 `summary`를 stdout으로 출력 |
+
+`drain` 실행 시 동일 로컬 환경의 같은 `cluster-name`/`nodepool-name` 조합에 대해 중복 실행을 차단합니다. 이미 같은 대상의 drain 프로세스가 실행 중이면 새 실행은 Kubernetes 조작 전에 실패합니다.
+여러 실행 환경(로컬/CI/클러스터 내부)에서 같은 NodePool drain을 동시에 막아야 한다면 `--drain-lock-mode kubernetes`를 사용하세요. 이 모드는 `coordination.k8s.io/v1` `Lease`를 사용하며, `--dry-run`에서는 lock을 잡지 않습니다.
+`--cluster-name`이 설정되면 Karpenter 사용률 PromQL에도 `cluster` label matcher를 포함해 같은 Prometheus Org 안의 다른 클러스터 NodePool과 섞이지 않도록 조회합니다.
+`--drain-node-selection empty-first` 또는 `least-pods`를 사용하면 제거 대상 파드가 적은 노드부터 선택해 재배치 충격을 줄일 수 있습니다. 이미 cordon된 노드가 남아 있는 환경에서는 `--drain-skip-unschedulable true`를 함께 사용해 같은 노드를 반복 대상으로 잡지 않도록 하세요.
+`--output json`은 특히 `--dry-run`과 함께 사용할 때 유용합니다. 실제 cordon/evict 없이 선택된 노드, 제거 예정 pod, 계획/선택/성공/실패/안전중단 요약을 구조화된 JSON으로 확인할 수 있습니다. 실제 실행에서는 evict/delete/force delete/PDB 차단 pod 수도 summary에 포함됩니다.
 
 #### 파드 제거 정책(안전 우선 + 조건부 폴백)
 
@@ -159,6 +192,7 @@ go run main.go drain \
 | `--pod-eviction-mode` | `evict` | `evict`(권장) 또는 `delete` |
 | `--force` | `false` | eviction이 반복 실패/타임아웃일 때 delete로 강제 전환 |
 | `--force-problem-pods` | `true` | 문제 파드는 즉시 delete(grace=0)로 처리 |
+| `--pod-delete-after-eviction` | `false` | eviction 성공 후 delete 보정을 추가 수행. 운영 기본은 비활성 권장 |
 | `--pdb-token` | `true` | 같은 PDB에 매칭되는 파드는 동시에 제한(토큰) |
 | `--pdb-token-max-in-flight` | `1` | 같은 PDB 토큰 동시 처리 개수 |
 | `--pod-max-concurrent` | `30` | 동시에 제거할 Pod 최대 개수 |
@@ -209,6 +243,38 @@ go run main.go drain \
   --drain-safety-queries "sum(increase(kube_pod_container_status_restarts_total[10m])) > 0; sum(kube_pod_status_phase{phase=\"Pending\"}) > 0"
 ```
 
+##### 예시 4) 제거 대상 파드가 적은 노드부터 1대만 드레인
+
+```sh
+go run main.go drain \
+  --nodepool-name "worker-nodepool-name" \
+  --cluster-name "devel_eks_cluster" \
+  --kube-config "local" \
+  --prometheus-address "http://localhost:8080/prometheus" \
+  --prometheus-org-id "organization-dev" \
+  --drain-max-absolute 1 \
+  --drain-safety-max-allocate-rate 90 \
+  --drain-node-selection empty-first \
+  --drain-skip-unschedulable true
+```
+
+##### 예시 5) dry-run 결과를 JSON으로 출력
+
+```sh
+go run main.go drain \
+  --nodepool-name "worker-nodepool-name" \
+  --cluster-name "devel_eks_cluster" \
+  --kube-config "local" \
+  --prometheus-address "http://localhost:8080/prometheus" \
+  --prometheus-org-id "organization-dev" \
+  --drain-max-absolute 1 \
+  --drain-safety-max-allocate-rate 90 \
+  --drain-node-selection empty-first \
+  --drain-skip-unschedulable true \
+  --dry-run \
+  --output json
+```
+
 ### `karpenter allocate-rate`
 
 Karpenter 관련 메트릭을 조회해 NodePool의 자원 사용률(Allocate Rate)을 계산합니다. `drain` 커맨드가 동시에 드레인할 노드 수를 산정하는 데 참고하는 값입니다.
@@ -223,7 +289,7 @@ Karpenter 관련 메트릭을 조회해 NodePool의 자원 사용률(Allocate Ra
 | --- | ---: | --- |
 | `--prometheus-address` | `http://localhost:8080/prometheus` | Prometheus 서버 주소 |
 | `--prometheus-org-id` | `organization-dev` | 멀티테넌시 환경에서 사용하는 Org ID (`X-Scope-OrgID`) |
-| `--slack-webhook-url` | `""` | Slack Webhook URL (`drain`에서 권장, 미지정 시 알림 실패) |
+| `--slack-webhook-url` | `""` | Slack Webhook URL (`drain`에서 권장, 미지정 시 알림 생략) |
 | `--kube-config` | `local` | `local`, `cluster`, `github_action` |
 | `--cluster-name` | `""` | 알림 메시지에 포함될 클러스터 이름 |
 | `--nodepool-name` | `devel-nodepool-name` | 드레인 대상 NodePool 이름 |
@@ -273,7 +339,7 @@ GitHub UI에서 **Actions → drain → Run workflow**로 실행할 수 있습�
 
 - `cluster_name`, `nodepool_name`, `prometheus_address`, `prometheus_org_id`
 - 드레인 정책: `drain_min`, `drain_max_absolute`, `drain_max_fraction`, `drain_safety_max_allocate_rate`, `drain_progressive`
-- 파드 정책: `pod_eviction_mode`, `force`, `force_problem_pods`, `pdb_token`, `pdb_token_max_in_flight`
+- 파드 정책: `pod_eviction_mode`, `force`, `force_problem_pods`, `pod_delete_after_eviction`, `pdb_token`, `pdb_token_max_in_flight`
 
 ---
 
@@ -351,12 +417,12 @@ drainNodeCount = floor(lenNodes * drainRate)
 
 ```text
 INFO Karpenter Allocate Rate 사용량 조회 커맨드를 실행합니다.
-INFO query query="karpenter_nodepool_usage{nodepool='nodepool-name', resource_type='memory'}"
-INFO query query="sum(karpenter_nodes_total_pod_requests{nodepool='nodepool-name',resource_type='memory'} + karpenter_nodes_total_daemon_requests{nodepool='nodepool-name',resource_type='memory'})"
+INFO query query="karpenter_nodepools_usage{nodepool=\"nodepool-name\",resource_type=\"memory\",cluster=\"cluster-name\"}"
+INFO query query="sum(karpenter_nodes_total_pod_requests{nodepool=\"nodepool-name\",resource_type=\"memory\",cluster=\"cluster-name\"} + karpenter_nodes_total_daemon_requests{nodepool=\"nodepool-name\",resource_type=\"memory\",cluster=\"cluster-name\"})"
 INFO Karpenter nodepoolUsage="331 GB"
 INFO Karpenter podRequest="91 GB"
-INFO query query="karpenter_nodepool_usage{nodepool='nodepool-name', resource_type='cpu'}"
-INFO query query="sum(karpenter_nodes_total_pod_requests{nodepool='nodepool-name',resource_type='cpu'} + karpenter_nodes_total_daemon_requests{nodepool='nodepool-name',resource_type='cpu'})"
+INFO query query="karpenter_nodepools_usage{nodepool=\"nodepool-name\",resource_type=\"cpu\",cluster=\"cluster-name\"}"
+INFO query query="sum(karpenter_nodes_total_pod_requests{nodepool=\"nodepool-name\",resource_type=\"cpu\",cluster=\"cluster-name\"} + karpenter_nodes_total_daemon_requests{nodepool=\"nodepool-name\",resource_type=\"cpu\",cluster=\"cluster-name\"})"
 INFO Karpenter nodepoolUsage="48 vCPU"
 INFO Karpenter podRequest="34 vCPU"
 INFO Karpenter memoryAllocateRate="27 %"
@@ -403,6 +469,7 @@ INFO 노드에서 데몬셋을 제외한 모든 Pod가 종료됨 nodeName=ip-10-
 - Pods: `get`, `list`, `watch`, `delete`
 - Pod eviction subresource: `create` (`--pod-eviction-mode evict` 기본값에서 필요)
 - PodDisruptionBudgets: `get`, `list`, `watch`
+- Leases: `get`, `create`, `update`, `delete` (`--drain-lock-mode kubernetes` 사용 시 필요)
 
 > `--pod-eviction-mode delete`만 사용할 경우 `pods/eviction` 권한은 필요하지 않습니다.  
 > 기본값인 `evict` 모드는 PDB를 Kubernetes eviction subresource로 적용하므로 `pods/eviction create` 권한이 필요합니다.
@@ -427,6 +494,9 @@ rules:
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

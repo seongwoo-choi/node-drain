@@ -153,11 +153,19 @@ func (s *SlackNotifier) formatNodeDrainMessage(results []types.NodeDrainResult) 
 		return fmt.Sprintf("ℹ️ 드레인 대상 노드가 없습니다. (클러스터: %s, Nodepool: %s)", s.clusterName, s.nodepoolName)
 	}
 
+	dryRun := allResultsDryRun(results)
 	message := fmt.Sprintf("🔄 노드 드레인 작업이 완료되었습니다 (클러스터: %s, Nodepool: %s)\n\n", s.clusterName, s.nodepoolName)
+	if dryRun {
+		message = fmt.Sprintf("ℹ️ 노드 드레인 dry-run 계획 생성 완료 (클러스터: %s, Nodepool: %s)\n\n", s.clusterName, s.nodepoolName)
+	}
+
 	for _, result := range results {
 		status := "성공"
 		if !result.Success {
 			status = "실패"
+		}
+		if result.DryRun && result.Success {
+			status = "계획"
 		}
 		message += fmt.Sprintf(
 			"• 노드: %s\n  인스턴스 타입: %s\n  노드풀: %s\n  노드 생성일: %s\n  시작 시간: %s\n  소요 시간(초): %d\n  상태: %s\n",
@@ -172,9 +180,24 @@ func (s *SlackNotifier) formatNodeDrainMessage(results []types.NodeDrainResult) 
 		if result.FailureReason != "" {
 			message += fmt.Sprintf("  실패 사유: %s\n", result.FailureReason)
 		}
+		if result.DryRun {
+			message += fmt.Sprintf("  제거 예정 Pod: %d개\n", len(result.PlannedPods))
+		}
 	}
 
 	return message
+}
+
+func allResultsDryRun(results []types.NodeDrainResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	for _, result := range results {
+		if !result.DryRun {
+			return false
+		}
+	}
+	return true
 }
 
 func formatNodeDrainSummaryBlock(summary types.NodeDrainSummary) string {
@@ -182,19 +205,45 @@ func formatNodeDrainSummaryBlock(summary types.NodeDrainSummary) string {
 	message += fmt.Sprintf("• TargetNodepool: %s\n", summary.TargetNodepool)
 	message += fmt.Sprintf("• TotalNodesInNodepool: %d\n", summary.TotalNodesInNodepool)
 	message += fmt.Sprintf("• PlannedDrainNodeCount: %d\n", summary.PlannedDrainNodeCount)
+	message += fmt.Sprintf("• SelectedDrainNodeCount: %d\n", summary.SelectedDrainNodeCount)
 	message += fmt.Sprintf("• DrainedNodeCount: %d\n", summary.DrainedNodeCount)
-	message += fmt.Sprintf("• TotalPods: %d\n", summary.TotalPods)
-	message += fmt.Sprintf("• EvictedPods: %d\n", summary.EvictedPods)
-	message += fmt.Sprintf("• DeletedPods: %d\n", summary.DeletedPods)
-	message += fmt.Sprintf("• ForceDeletedPods: %d\n", summary.ForceDeletedPods)
-	message += fmt.Sprintf("• PDBBlockedPods: %d\n", summary.PDBBlockedPods)
-	message += fmt.Sprintf("• ForcedByFallback: %d\n", summary.ForcedByFallback)
-	message += fmt.Sprintf("• ProblemPodsForced: %d\n", summary.ProblemPodsForced)
+	message += fmt.Sprintf("• SuccessfulNodeCount: %d\n", summary.SuccessfulNodeCount)
+	message += fmt.Sprintf("• FailedNodeCount: %d\n", summary.FailedNodeCount)
+	if summary.DryRun {
+		message += "• DryRun: true\n"
+	}
+	if summary.PlannedPodCount > 0 {
+		message += fmt.Sprintf("• PlannedPodCount: %d\n", summary.PlannedPodCount)
+	}
+	if summary.TotalPods > 0 {
+		message += fmt.Sprintf("• TotalPods: %d\n", summary.TotalPods)
+	}
+	if summary.EvictedPods > 0 {
+		message += fmt.Sprintf("• EvictedPods: %d\n", summary.EvictedPods)
+	}
+	if summary.DeletedPods > 0 {
+		message += fmt.Sprintf("• DeletedPods: %d\n", summary.DeletedPods)
+	}
+	if summary.ForceDeletedPods > 0 {
+		message += fmt.Sprintf("• ForceDeletedPods: %d\n", summary.ForceDeletedPods)
+	}
+	if summary.PDBBlockedPods > 0 {
+		message += fmt.Sprintf("• PDBBlockedPods: %d\n", summary.PDBBlockedPods)
+	}
+	if summary.ForcedByFallback > 0 {
+		message += fmt.Sprintf("• ForcedByFallback: %d\n", summary.ForcedByFallback)
+	}
+	if summary.ProblemPodsForced > 0 {
+		message += fmt.Sprintf("• ProblemPodsForced: %d\n", summary.ProblemPodsForced)
+	}
 	if summary.StoppedBySafety {
 		message += fmt.Sprintf("• StoppedBySafety: true (%s)\n", summary.StopSafetyReason)
 	}
 	if len(summary.TopErrorReasons) > 0 {
 		message += fmt.Sprintf("• TopErrorReasons: %s\n", strings.Join(summary.TopErrorReasons, ", "))
+	}
+	if len(summary.Warnings) > 0 {
+		message += fmt.Sprintf("• Warnings: %s\n", strings.Join(summary.Warnings, ", "))
 	}
 	return message
 }

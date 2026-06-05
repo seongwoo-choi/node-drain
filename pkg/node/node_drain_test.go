@@ -4,7 +4,9 @@ import (
 	"app/pkg/pod"
 	"app/types"
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +40,21 @@ func (f *sequenceAllocateRateProvider) GetAllocateRate(ctx context.Context, reso
 		return values[len(values)-1], nil
 	}
 	return values[idx], nil
+}
+
+type failOnSafetyRecheckAllocateRateProvider struct {
+	calls map[string]int
+}
+
+func (f *failOnSafetyRecheckAllocateRateProvider) GetAllocateRate(ctx context.Context, resourceType string) (int, error) {
+	if f.calls == nil {
+		f.calls = map[string]int{}
+	}
+	f.calls[resourceType]++
+	if f.calls[resourceType] > 1 {
+		return 0, errors.New("metrics backend unavailable")
+	}
+	return 30, nil
 }
 
 type fakeNotifier struct{}
@@ -207,6 +224,447 @@ func TestNodeDrainProgressiveDoesNotPreCordonRemainingNodes(t *testing.T) {
 	assertNodeUnschedulable(t, clientSet, "node-3", false)
 }
 
+func TestNodeDrainProgressiveFailClosedStopsOnSafetyRecheckError(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "0")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "90")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "true")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	for i := 1; i <= 3; i++ {
+		node := newNode(nodepoolName, i)
+		if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+			t.Fatalf("노드 생성 실패: %v", err)
+		}
+	}
+
+	results, err := NodeDrain(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: &failOnSafetyRecheckAllocateRateProvider{},
+		Notifier:             fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     testEvictionConfig(),
+	})
+	if err != nil {
+		t.Fatalf("NodeDrain 실패: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("drain 결과 개수 불일치: got=%d want=1", len(results))
+	}
+
+	assertNodeUnschedulable(t, clientSet, "node-1", true)
+	assertNodeUnschedulable(t, clientSet, "node-2", false)
+	assertNodeUnschedulable(t, clientSet, "node-3", false)
+}
+
+func TestNodeDrainWithReportSummarizesSafetyStop(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "0")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "90")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "true")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	for i := 1; i <= 3; i++ {
+		node := newNode(nodepoolName, i)
+		if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+			t.Fatalf("노드 생성 실패: %v", err)
+		}
+	}
+
+	provider := &sequenceAllocateRateProvider{
+		rates: map[string][]int{
+			"memory": {30, 95, 95},
+			"cpu":    {30, 95, 95},
+		},
+		calls: map[string]int{},
+	}
+
+	report, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: provider,
+		Notifier:             fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     testEvictionConfig(),
+	})
+	if err != nil {
+		t.Fatalf("NodeDrainWithReport 실패: %v", err)
+	}
+	if len(report.Results) != 1 {
+		t.Fatalf("drain 결과 개수 불일치: got=%d want=1", len(report.Results))
+	}
+	if report.Summary.TotalNodesInNodepool != 3 {
+		t.Fatalf("total node count 불일치: got=%d want=3", report.Summary.TotalNodesInNodepool)
+	}
+	if report.Summary.PlannedDrainNodeCount != 2 {
+		t.Fatalf("planned drain count 불일치: got=%d want=2", report.Summary.PlannedDrainNodeCount)
+	}
+	if report.Summary.SelectedDrainNodeCount != 2 {
+		t.Fatalf("selected drain count 불일치: got=%d want=2", report.Summary.SelectedDrainNodeCount)
+	}
+	if report.Summary.DrainedNodeCount != 1 {
+		t.Fatalf("drained count 불일치: got=%d want=1", report.Summary.DrainedNodeCount)
+	}
+	if !report.Summary.StoppedBySafety {
+		t.Fatalf("expected StoppedBySafety=true: %+v", report.Summary)
+	}
+	if !strings.Contains(report.Summary.StopSafetyReason, "maxAllocateRate") {
+		t.Fatalf("unexpected safety stop reason: %s", report.Summary.StopSafetyReason)
+	}
+}
+
+func TestNodeDrainDryRunPlansPodsWithoutCordonOrEvict(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "true")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	for i := 1; i <= 3; i++ {
+		node := newNode(nodepoolName, i)
+		if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+			t.Fatalf("노드 생성 실패: %v", err)
+		}
+	}
+
+	pods := []*coreV1.Pod{
+		newPodOnNode("default", "workload-pod", "node-1", coreV1.PodRunning, "ReplicaSet", "workload-rs"),
+		newPodOnNode("default", "daemon-pod", "node-1", coreV1.PodRunning, "DaemonSet", "daemon"),
+		newPodOnNode("default", "done-pod", "node-1", coreV1.PodSucceeded, "Job", "done-job"),
+	}
+	for _, p := range pods {
+		if _, err := clientSet.CoreV1().Pods(p.Namespace).Create(context.Background(), p, metaV1.CreateOptions{}); err != nil {
+			t.Fatalf("파드 생성 실패: %v", err)
+		}
+	}
+
+	results, err := NodeDrain(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: fakeAllocateRateProvider{
+			rates: map[string]int{
+				"memory": 30,
+				"cpu":    30,
+			},
+		},
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     testEvictionConfig(),
+		DryRun:       true,
+	})
+	if err != nil {
+		t.Fatalf("NodeDrain dry-run 실패: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("dry-run 결과 개수 불일치: got=%d want=1", len(results))
+	}
+	result := results[0]
+	if !result.DryRun {
+		t.Fatal("expected dry-run result")
+	}
+	if !result.Success {
+		t.Fatalf("dry-run 결과 실패: %+v", result)
+	}
+	if len(result.PlannedPods) != 1 {
+		t.Fatalf("planned pod 개수 불일치: got=%d want=1 %+v", len(result.PlannedPods), result.PlannedPods)
+	}
+	if result.PlannedPods[0].Name != "workload-pod" {
+		t.Fatalf("planned pod 불일치: got=%s want=workload-pod", result.PlannedPods[0].Name)
+	}
+
+	assertNodeUnschedulable(t, clientSet, "node-1", false)
+	assertNodeUnschedulable(t, clientSet, "node-2", false)
+	assertNodeUnschedulable(t, clientSet, "node-3", false)
+	if _, err := clientSet.CoreV1().Pods("default").Get(context.Background(), "workload-pod", metaV1.GetOptions{}); err != nil {
+		t.Fatalf("dry-run은 pod를 삭제하면 안 됨: %v", err)
+	}
+}
+
+func TestNodeDrainWithReportSummarizesDryRunPlan(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "true")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	for i := 1; i <= 3; i++ {
+		node := newNode(nodepoolName, i)
+		if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+			t.Fatalf("노드 생성 실패: %v", err)
+		}
+	}
+
+	p := newPodOnNode("default", "workload-pod", "node-1", coreV1.PodRunning, "ReplicaSet", "workload-rs")
+	if _, err := clientSet.CoreV1().Pods(p.Namespace).Create(context.Background(), p, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("파드 생성 실패: %v", err)
+	}
+
+	report, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: fakeAllocateRateProvider{
+			rates: map[string]int{
+				"memory": 30,
+				"cpu":    30,
+			},
+		},
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     testEvictionConfig(),
+		DryRun:       true,
+	})
+	if err != nil {
+		t.Fatalf("NodeDrainWithReport dry-run 실패: %v", err)
+	}
+	if !report.Summary.DryRun {
+		t.Fatalf("expected dry-run summary: %+v", report.Summary)
+	}
+	if report.Summary.PlannedDrainNodeCount != 1 {
+		t.Fatalf("planned drain count 불일치: got=%d want=1", report.Summary.PlannedDrainNodeCount)
+	}
+	if report.Summary.PlannedPodCount != 1 {
+		t.Fatalf("planned pod count 불일치: got=%d want=1", report.Summary.PlannedPodCount)
+	}
+	if report.Summary.DrainedNodeCount != 0 {
+		t.Fatalf("dry-run drained count 불일치: got=%d want=0", report.Summary.DrainedNodeCount)
+	}
+	if report.Summary.SuccessfulNodeCount != 1 {
+		t.Fatalf("successful node count 불일치: got=%d want=1", report.Summary.SuccessfulNodeCount)
+	}
+}
+
+func TestNodeDrainWithReportSummarizesActualPodEviction(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "false")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	for i := 1; i <= 2; i++ {
+		node := newNode(nodepoolName, i)
+		if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+			t.Fatalf("노드 생성 실패: %v", err)
+		}
+	}
+
+	p := newPodOnNode("default", "workload-pod", "node-1", coreV1.PodRunning, "ReplicaSet", "workload-rs")
+	if _, err := clientSet.CoreV1().Pods(p.Namespace).Create(context.Background(), p, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("파드 생성 실패: %v", err)
+	}
+
+	evictionCfg := testEvictionConfig()
+	evictionCfg.DeleteAfterEviction = true
+
+	report, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: fakeAllocateRateProvider{
+			rates: map[string]int{
+				"memory": 30,
+				"cpu":    30,
+			},
+		},
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     evictionCfg,
+	})
+	if err != nil {
+		t.Fatalf("NodeDrainWithReport 실패: %v", err)
+	}
+	if report.Summary.TotalPods != 1 {
+		t.Fatalf("total pod count 불일치: got=%d want=1", report.Summary.TotalPods)
+	}
+	if report.Summary.EvictedPods != 1 {
+		t.Fatalf("evicted pod count 불일치: got=%d want=1", report.Summary.EvictedPods)
+	}
+	if report.Summary.DeletedPods != 1 {
+		t.Fatalf("deleted pod count 불일치: got=%d want=1", report.Summary.DeletedPods)
+	}
+	if report.Summary.DrainedNodeCount != 1 {
+		t.Fatalf("drained node count 불일치: got=%d want=1", report.Summary.DrainedNodeCount)
+	}
+}
+
+func TestNodeDrainCanSkipUnschedulableNodes(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "false")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	for i := 1; i <= 3; i++ {
+		node := newNode(nodepoolName, i)
+		if i == 1 {
+			node.Spec.Unschedulable = true
+		}
+		if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+			t.Fatalf("노드 생성 실패: %v", err)
+		}
+	}
+
+	results, err := NodeDrain(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: fakeAllocateRateProvider{
+			rates: map[string]int{
+				"memory": 30,
+				"cpu":    30,
+			},
+		},
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName:          nodepoolName,
+		Eviction:              testEvictionConfig(),
+		NodeSelectionStrategy: DrainNodeSelectionOldest,
+		SkipUnschedulable:     true,
+	})
+	if err != nil {
+		t.Fatalf("NodeDrain 실패: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("drain 결과 개수 불일치: got=%d want=1", len(results))
+	}
+	if results[0].NodeName != "node-2" {
+		t.Fatalf("drain 노드 선택 불일치: got=%s want=node-2", results[0].NodeName)
+	}
+
+	assertNodeUnschedulable(t, clientSet, "node-1", true)
+	assertNodeUnschedulable(t, clientSet, "node-2", true)
+	assertNodeUnschedulable(t, clientSet, "node-3", false)
+}
+
+func TestNodeDrainSelectsEmptyFirstNode(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "false")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	for i := 1; i <= 3; i++ {
+		node := newNode(nodepoolName, i)
+		if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+			t.Fatalf("노드 생성 실패: %v", err)
+		}
+	}
+
+	p := newPodOnNode("default", "workload-pod", "node-1", coreV1.PodRunning, "ReplicaSet", "workload-rs")
+	if _, err := clientSet.CoreV1().Pods(p.Namespace).Create(context.Background(), p, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("파드 생성 실패: %v", err)
+	}
+
+	results, err := NodeDrain(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: fakeAllocateRateProvider{
+			rates: map[string]int{
+				"memory": 30,
+				"cpu":    30,
+			},
+		},
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName:          nodepoolName,
+		Eviction:              testEvictionConfig(),
+		NodeSelectionStrategy: DrainNodeSelectionEmptyFirst,
+	})
+	if err != nil {
+		t.Fatalf("NodeDrain 실패: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("drain 결과 개수 불일치: got=%d want=1", len(results))
+	}
+	if results[0].NodeName != "node-2" {
+		t.Fatalf("drain 노드 선택 불일치: got=%s want=node-2", results[0].NodeName)
+	}
+
+	assertNodeUnschedulable(t, clientSet, "node-1", false)
+	assertNodeUnschedulable(t, clientSet, "node-2", true)
+	assertNodeUnschedulable(t, clientSet, "node-3", false)
+}
+
+func TestNodeDrainRejectsInvalidNodeSelectionStrategy(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "0")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "false")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	for i := 1; i <= 2; i++ {
+		node := newNode(nodepoolName, i)
+		if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+			t.Fatalf("노드 생성 실패: %v", err)
+		}
+	}
+
+	_, err := NodeDrain(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: fakeAllocateRateProvider{
+			rates: map[string]int{
+				"memory": 30,
+				"cpu":    30,
+			},
+		},
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName:          nodepoolName,
+		Eviction:              testEvictionConfig(),
+		NodeSelectionStrategy: "unknown",
+	})
+	if err == nil {
+		t.Fatal("expected invalid node selection strategy error, got nil")
+	}
+	if !strings.Contains(err.Error(), "지원하지 않는 드레인 노드 선택 전략") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func testEvictionConfig() *pod.EvictionConfig {
 	return &pod.EvictionConfig{
 		MaxConcurrentEvictions:   2,
@@ -218,6 +676,30 @@ func testEvictionConfig() *pod.EvictionConfig {
 		NodeTerminationTimeout:   1 * time.Second,
 		NodeTerminationCheckTick: 10 * time.Millisecond,
 		PostEvictionNodeDelay:    0,
+	}
+}
+
+func newPodOnNode(namespace string, name string, nodeName string, phase coreV1.PodPhase, ownerKind string, ownerName string) *coreV1.Pod {
+	return &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+			OwnerReferences: []metaV1.OwnerReference{
+				{
+					Kind: ownerKind,
+					Name: ownerName,
+				},
+			},
+		},
+		Spec: coreV1.PodSpec{
+			NodeName: nodeName,
+			Containers: []coreV1.Container{
+				{Name: "container"},
+			},
+		},
+		Status: coreV1.PodStatus{
+			Phase: phase,
+		},
 	}
 }
 
