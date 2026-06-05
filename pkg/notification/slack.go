@@ -91,7 +91,7 @@ func NewEnvSlackNotifier() *SlackNotifier {
 
 // SendNodeDrainComplete sends completion summary.
 func (s *SlackNotifier) SendNodeDrainComplete(ctx context.Context, results []types.NodeDrainResult) error {
-	if s.webhookURL == "" {
+	if s.disabled() {
 		return nil
 	}
 	return s.sendSlackMessage(ctx, s.formatNodeDrainMessage(results))
@@ -99,7 +99,7 @@ func (s *SlackNotifier) SendNodeDrainComplete(ctx context.Context, results []typ
 
 // SendNodeDrainCompleteWithSummary sends completion summary with aggregate metrics.
 func (s *SlackNotifier) SendNodeDrainCompleteWithSummary(ctx context.Context, results []types.NodeDrainResult, summary types.NodeDrainSummary) error {
-	if s.webhookURL == "" {
+	if s.disabled() {
 		return nil
 	}
 	message := s.formatNodeDrainMessage(results)
@@ -109,25 +109,25 @@ func (s *SlackNotifier) SendNodeDrainCompleteWithSummary(ctx context.Context, re
 
 // SendNodeDrainError sends error summary.
 func (s *SlackNotifier) SendNodeDrainError(ctx context.Context, err error) error {
-	if s.webhookURL == "" {
+	if s.disabled() {
 		return nil
 	}
-	return s.sendSlackMessage(ctx, err.Error())
+	return s.sendSlackMessage(ctx, slackErrorMessage(err))
 }
 
 // SendNodeDrainErrorWithSummary sends error summary with aggregate metrics.
 func (s *SlackNotifier) SendNodeDrainErrorWithSummary(ctx context.Context, err error, summary types.NodeDrainSummary) error {
-	if s.webhookURL == "" {
+	if s.disabled() {
 		return nil
 	}
-	message := fmt.Sprintf("❌ 노드 드레인 작업 실패: %s\n\n", err.Error())
+	message := fmt.Sprintf("❌ 노드 드레인 작업 실패: %s\n\n", slackErrorMessage(err))
 	message += formatNodeDrainSummaryBlock(summary)
 	return s.sendSlackMessage(ctx, message)
 }
 
 // SendNodeCount sends node count message.
 func (s *SlackNotifier) SendNodeCount(ctx context.Context, nodeCount int) error {
-	if s.webhookURL == "" {
+	if s.disabled() {
 		return nil
 	}
 
@@ -137,7 +137,7 @@ func (s *SlackNotifier) SendNodeCount(ctx context.Context, nodeCount int) error 
 
 // SendKarpenterAllocateRate sends allocation-rate message.
 func (s *SlackNotifier) SendKarpenterAllocateRate(ctx context.Context, memoryAllocateRate int, cpuAllocateRate int) error {
-	if s.webhookURL == "" {
+	if s.disabled() {
 		return nil
 	}
 
@@ -146,6 +146,17 @@ func (s *SlackNotifier) SendKarpenterAllocateRate(ctx context.Context, memoryAll
 	message += fmt.Sprintf("• CpuAllocateRate: %d%%\n", cpuAllocateRate)
 
 	return s.sendSlackMessage(ctx, message)
+}
+
+func (s *SlackNotifier) disabled() bool {
+	return s == nil || s.webhookURL == ""
+}
+
+func slackErrorMessage(err error) string {
+	if err == nil {
+		return "unknown error"
+	}
+	return err.Error()
 }
 
 func (s *SlackNotifier) formatNodeDrainMessage(results []types.NodeDrainResult) string {

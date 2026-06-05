@@ -69,6 +69,17 @@ func TestSlackNoWebhookIsNoop(t *testing.T) {
 	}
 }
 
+func TestSlackNilNotifierIsNoop(t *testing.T) {
+	var notifier *SlackNotifier
+
+	if err := notifier.SendNodeCount(context.Background(), 3); err != nil {
+		t.Fatalf("SendNodeCount should no-op for nil notifier: %v", err)
+	}
+	if err := notifier.SendNodeDrainError(context.Background(), context.Canceled); err != nil {
+		t.Fatalf("SendNodeDrainError should no-op for nil notifier: %v", err)
+	}
+}
+
 func TestSlackWhitespaceWebhookIsNoop(t *testing.T) {
 	attempts := 0
 	notifier := NewSlackNotifier(SlackConfig{
@@ -98,6 +109,36 @@ func TestSlackWhitespaceWebhookIsNoop(t *testing.T) {
 	}
 	if notifier.nodepoolName != "test-pool" {
 		t.Fatalf("nodepoolName not trimmed: %q", notifier.nodepoolName)
+	}
+}
+
+func TestSlackNilErrorUsesFallbackMessage(t *testing.T) {
+	var body string
+	notifier := NewSlackNotifier(SlackConfig{
+		WebhookURL:   "https://example.com/webhook",
+		ClusterName:  "test-cluster",
+		NodepoolName: "test-pool",
+		HTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				payload, err := io.ReadAll(req.Body)
+				if err != nil {
+					t.Fatalf("read request body failed: %v", err)
+				}
+				body = string(payload)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader("ok")),
+					Header:     make(http.Header),
+				}, nil
+			}),
+		},
+	})
+
+	if err := notifier.SendNodeDrainError(context.Background(), nil); err != nil {
+		t.Fatalf("SendNodeDrainError with nil error failed: %v", err)
+	}
+	if !strings.Contains(body, "unknown error") {
+		t.Fatalf("fallback error message missing from payload: %s", body)
 	}
 }
 
