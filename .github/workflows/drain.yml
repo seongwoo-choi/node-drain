@@ -79,6 +79,26 @@ on:
         required: false
         default: "1"
         type: string
+      pod_eviction_timeout:
+        description: "노드 단위 Pod 제거 전체 타임아웃"
+        required: false
+        default: "10m"
+        type: string
+      pod_node_termination_timeout:
+        description: "노드의 데몬셋 제외 Pod 종료 대기 타임아웃"
+        required: false
+        default: "10m"
+        type: string
+      pod_node_termination_check_tick:
+        description: "노드 Pod 종료 상태 확인 주기"
+        required: false
+        default: "15s"
+        type: string
+      pod_post_eviction_node_delay:
+        description: "노드 드레인 후 추가 대기 시간(0s=비활성)"
+        required: false
+        default: "50s"
+        type: string
 
 jobs:
   run:
@@ -133,4 +153,8 @@ jobs:
             --force="${{ inputs.force }}" \
             --force-problem-pods="${{ inputs.force_problem_pods }}" \
             --pdb-token="${{ inputs.pdb_token }}" \
-            --pdb-token-max-in-flight "${{ inputs.pdb_token_max_in_flight }}"
+            --pdb-token-max-in-flight "${{ inputs.pdb_token_max_in_flight }}" \
+            --pod-eviction-timeout "${{ inputs.pod_eviction_timeout }}" \
+            --pod-node-termination-timeout "${{ inputs.pod_node_termination_timeout }}" \
+            --pod-node-termination-check-tick "${{ inputs.pod_node_termination_check_tick }}" \
+            --pod-post-eviction-node-delay "${{ inputs.pod_post_eviction_node_delay }}"

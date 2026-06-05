@@ -106,6 +106,22 @@ on:
         description: '같은 PDB 토큰 동시 처리 개수'
         required: false
         default: '1'
+      POD_EVICTION_TIMEOUT:
+        description: '노드 단위 Pod 제거 전체 타임아웃'
+        required: false
+        default: '10m'
+      POD_NODE_TERMINATION_TIMEOUT:
+        description: '노드의 데몬셋 제외 Pod 종료 대기 타임아웃'
+        required: false
+        default: '10m'
+      POD_NODE_TERMINATION_CHECK_TICK:
+        description: '노드 Pod 종료 상태 확인 주기'
+        required: false
+        default: '15s'
+      POD_POST_EVICTION_NODE_DELAY:
+        description: '노드 드레인 후 추가 대기 시간(0s=비활성)'
+        required: false
+        default: '50s'
       EKS_CLUSTER_VERSION:
         description: '클러스터 버전입니다. - ex) v1.28.0 / v1.29.0'
         required: true
@@ -198,6 +214,10 @@ jobs:
           cmd+=(--force-problem-pods="${{ inputs.FORCE_PROBLEM_PODS }}")
           cmd+=(--pdb-token="${{ inputs.PDB_TOKEN }}")
           cmd+=(--pdb-token-max-in-flight "${{ inputs.PDB_TOKEN_MAX_IN_FLIGHT }}")
+          cmd+=(--pod-eviction-timeout "${{ inputs.POD_EVICTION_TIMEOUT }}")
+          cmd+=(--pod-node-termination-timeout "${{ inputs.POD_NODE_TERMINATION_TIMEOUT }}")
+          cmd+=(--pod-node-termination-check-tick "${{ inputs.POD_NODE_TERMINATION_CHECK_TICK }}")
+          cmd+=(--pod-post-eviction-node-delay "${{ inputs.POD_POST_EVICTION_NODE_DELAY }}")
         else
           cmd+=(karpenter allocate-rate)
         fi

@@ -162,6 +162,28 @@ func TestDrainWorkflowCanConfigureKubeconfigFromSecret(t *testing.T) {
 	}
 }
 
+func TestDrainWorkflowPassesPodTimeoutControls(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/drain.yml")
+	if err != nil {
+		t.Fatalf("read workflow failed: %v", err)
+	}
+	text := string(workflow)
+	for _, required := range []string{
+		"pod_eviction_timeout:",
+		"pod_node_termination_timeout:",
+		"pod_node_termination_check_tick:",
+		"pod_post_eviction_node_delay:",
+		`--pod-eviction-timeout "${{ inputs.pod_eviction_timeout }}"`,
+		`--pod-node-termination-timeout "${{ inputs.pod_node_termination_timeout }}"`,
+		`--pod-node-termination-check-tick "${{ inputs.pod_node_termination_check_tick }}"`,
+		`--pod-post-eviction-node-delay "${{ inputs.pod_post_eviction_node_delay }}"`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("drain workflow missing pod timeout control: %s", required)
+		}
+	}
+}
+
 func TestLegacyWorkflowAvoidsPlaceholderDefaults(t *testing.T) {
 	workflow, err := os.ReadFile("../.github/workflows/eks-node-drain-based-on-karpenter-allocate-rate.yaml")
 	if err != nil {
@@ -194,6 +216,10 @@ func TestLegacyWorkflowPassesDrainSafetyFlags(t *testing.T) {
 		`cmd+=(--drain-safety-max-allocate-rate "${{ inputs.DRAIN_SAFETY_MAX_ALLOCATE_RATE }}")`,
 		`cmd+=(--force="${{ inputs.FORCE }}")`,
 		`cmd+=(--pdb-token="${{ inputs.PDB_TOKEN }}")`,
+		`cmd+=(--pod-eviction-timeout "${{ inputs.POD_EVICTION_TIMEOUT }}")`,
+		`cmd+=(--pod-node-termination-timeout "${{ inputs.POD_NODE_TERMINATION_TIMEOUT }}")`,
+		`cmd+=(--pod-node-termination-check-tick "${{ inputs.POD_NODE_TERMINATION_CHECK_TICK }}")`,
+		`cmd+=(--pod-post-eviction-node-delay "${{ inputs.POD_POST_EVICTION_NODE_DELAY }}")`,
 		`"${cmd[@]}"`,
 	} {
 		if !strings.Contains(text, required) {
