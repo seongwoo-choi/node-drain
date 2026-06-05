@@ -105,6 +105,38 @@ func TestDrainCommandRejectsUnexpectedArgs(t *testing.T) {
 	}
 }
 
+func TestDrainCommandRejectsInvalidDrainEnvBeforeKubeClient(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+	configureDrainCommandForValidationTest(t)
+	t.Setenv("DRAIN_MAX_FRACTION", "1.5")
+
+	err := drainCmd.RunE(&cobra.Command{}, nil)
+	if err == nil {
+		t.Fatal("expected invalid drain env error")
+	}
+	if !strings.Contains(err.Error(), "DRAIN_MAX_FRACTION") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDrainCommandRejectsInvalidPodEnvBeforeKubeClient(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+	configureDrainCommandForValidationTest(t)
+	t.Setenv("POD_FORCE", "maybe")
+
+	err := drainCmd.RunE(&cobra.Command{}, nil)
+	if err == nil {
+		t.Fatal("expected invalid pod env error")
+	}
+	if !strings.Contains(err.Error(), "POD_FORCE") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestAcquireDrainRunLockBlocksDuplicate(t *testing.T) {
 	lockFile, err := acquireLocalDrainRunLock("test-cluster", "test-nodepool")
 	if err != nil {
@@ -314,6 +346,78 @@ func (l *recordingDrainRunLock) Release(ctx context.Context) error {
 	l.released = true
 	l.releaseContextErr = ctx.Err()
 	return nil
+}
+
+func configureDrainCommandForValidationTest(t *testing.T) {
+	t.Helper()
+
+	for _, key := range []string{
+		"DRAIN_POLICY",
+		"DRAIN_ROUNDING",
+		"DRAIN_MIN",
+		"DRAIN_MAX_ABSOLUTE",
+		"DRAIN_MAX_FRACTION",
+		"DRAIN_STEP_RULES",
+		"DRAIN_SAFETY_MAX_ALLOCATE_RATE",
+		"DRAIN_SAFETY_QUERIES",
+		"DRAIN_SAFETY_FAIL_CLOSED",
+		"DRAIN_PROGRESSIVE",
+		"POD_EVICTION_MODE",
+		"POD_FORCE",
+		"POD_FORCE_PROBLEM_PODS",
+		"POD_DELETE_AFTER_EVICTION",
+		"POD_PDB_TOKEN",
+		"POD_PDB_TOKEN_MAX_IN_FLIGHT",
+		"POD_MAX_CONCURRENT",
+		"POD_MAX_RETRIES",
+		"POD_RETRY_BACKOFF",
+		"POD_DELETION_TIMEOUT",
+		"POD_CHECK_INTERVAL",
+	} {
+		t.Setenv(key, "")
+	}
+
+	prometheusAddress = "http://localhost:8080/prometheus"
+	prometheusOrgID = "organization-dev"
+	slackWebhookURL = ""
+	kubeConfig = "invalid-mode"
+	kubeConfigPath = ""
+	clusterName = "test-cluster"
+	nodepoolName = "test-nodepool"
+
+	drainPolicy = "formula"
+	drainRounding = "floor"
+	drainMin = 0
+	drainMaxAbsolute = 0
+	drainMaxFraction = 0
+	drainStepRules = ""
+	drainSafetyMaxAllocateRate = 0
+	drainSafetyQueries = ""
+	drainSafetyFailClosed = true
+	drainProgressive = true
+	drainDryRun = false
+	drainLockMode = "local"
+	drainLockNamespace = "kube-system"
+	drainLockLeaseDuration = "10m"
+	drainNodeSelectionStrategy = "oldest"
+	drainSkipUnschedulable = false
+	drainOutputFormat = "text"
+
+	podEvictionMode = "evict"
+	podForce = false
+	podForceProblemPods = true
+	podDeleteAfterEviction = false
+	podPDBToken = true
+	podPDBTokenMaxInFlight = 1
+	podMaxConcurrent = 30
+	podMaxRetries = 3
+	podRetryBackoff = "10s"
+	podDeletionTimeout = "2m"
+	podCheckInterval = "20s"
+
+	t.Setenv("PROMETHEUS_ADDRESS", "http://localhost:8080/prometheus")
+	t.Setenv("CLUSTER_NAME", "test-cluster")
+	t.Setenv("NODEPOOL_NAME", "test-nodepool")
 }
 
 func restoreCommandEnv(t *testing.T) {

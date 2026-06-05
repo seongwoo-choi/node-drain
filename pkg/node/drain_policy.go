@@ -100,6 +100,54 @@ func GetDrainPolicyOptionsFromEnv() DrainPolicyOptions {
 	return opts
 }
 
+func ValidateDrainPolicyEnv() error {
+	if v := strings.TrimSpace(os.Getenv("DRAIN_POLICY")); v != "" {
+		switch DrainPolicy(strings.ToLower(v)) {
+		case DrainPolicyFormula, DrainPolicyStep:
+		default:
+			return fmt.Errorf("invalid DRAIN_POLICY: %s", v)
+		}
+	}
+
+	if v := strings.TrimSpace(os.Getenv("DRAIN_ROUNDING")); v != "" {
+		switch DrainRounding(strings.ToLower(v)) {
+		case DrainRoundingFloor, DrainRoundingRound, DrainRoundingCeil:
+		default:
+			return fmt.Errorf("invalid DRAIN_ROUNDING: %s", v)
+		}
+	}
+
+	for _, key := range []string{"DRAIN_MIN", "DRAIN_MAX_ABSOLUTE", "DRAIN_SAFETY_MAX_ALLOCATE_RATE"} {
+		if err := validateNonNegativeEnvInt(key); err != nil {
+			return err
+		}
+	}
+	if err := validateFractionEnvFloat("DRAIN_MAX_FRACTION"); err != nil {
+		return err
+	}
+	for _, key := range []string{"DRAIN_SAFETY_FAIL_CLOSED", "DRAIN_PROGRESSIVE"} {
+		if err := validateBoolEnv(key); err != nil {
+			return err
+		}
+	}
+
+	if v := strings.TrimSpace(os.Getenv("DRAIN_STEP_RULES")); v != "" {
+		rules, err := parseStepRules(v)
+		if err != nil {
+			return fmt.Errorf("invalid DRAIN_STEP_RULES: %w", err)
+		}
+		for _, rule := range rules {
+			if rule.MaxAllocateRate < 0 {
+				return fmt.Errorf("invalid DRAIN_STEP_RULES: threshold must be non-negative")
+			}
+			if rule.DrainCount < 0 {
+				return fmt.Errorf("invalid DRAIN_STEP_RULES: drain count must be non-negative")
+			}
+		}
+	}
+	return nil
+}
+
 func parseEnvInt(key string, defaultValue int) int {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
@@ -122,6 +170,47 @@ func parseEnvFloat(key string, defaultValue float64) float64 {
 		return defaultValue
 	}
 	return f
+}
+
+func validateNonNegativeEnvInt(key string) error {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
+	}
+	if i < 0 {
+		return fmt.Errorf("invalid %s: must be non-negative", key)
+	}
+	return nil
+}
+
+func validateFractionEnvFloat(key string) error {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
+	}
+	if f < 0 || f > 1 {
+		return fmt.Errorf("invalid %s: must be between 0 and 1", key)
+	}
+	return nil
+}
+
+func validateBoolEnv(key string) error {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	if _, err := strconv.ParseBool(v); err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
+	}
+	return nil
 }
 
 func splitQueries(s string) []string {

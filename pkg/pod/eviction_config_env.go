@@ -1,6 +1,7 @@
 package pod
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -91,4 +92,90 @@ func GetEvictionConfigFromEnv() *EvictionConfig {
 	}
 
 	return cfg
+}
+
+func ValidateEvictionConfigEnv() error {
+	if v := strings.TrimSpace(os.Getenv("POD_EVICTION_MODE")); v != "" {
+		switch EvictionMode(strings.ToLower(v)) {
+		case EvictionModeEvict, EvictionModeDelete:
+		default:
+			return fmt.Errorf("invalid POD_EVICTION_MODE: %s", v)
+		}
+	}
+
+	for _, key := range []string{"POD_FORCE", "POD_FORCE_PROBLEM_PODS", "POD_DELETE_AFTER_EVICTION", "POD_PDB_TOKEN"} {
+		if err := validateBoolEnv(key); err != nil {
+			return err
+		}
+	}
+	for _, key := range []string{"POD_PDB_TOKEN_MAX_IN_FLIGHT", "POD_MAX_CONCURRENT"} {
+		if err := validatePositiveEnvInt(key); err != nil {
+			return err
+		}
+	}
+	if err := validateNonNegativeEnvInt("POD_MAX_RETRIES"); err != nil {
+		return err
+	}
+	for _, key := range []string{"POD_RETRY_BACKOFF", "POD_DELETION_TIMEOUT", "POD_CHECK_INTERVAL"} {
+		if err := validatePositiveEnvDuration(key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateBoolEnv(key string) error {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	if _, err := strconv.ParseBool(v); err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
+	}
+	return nil
+}
+
+func validatePositiveEnvInt(key string) error {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
+	}
+	if i <= 0 {
+		return fmt.Errorf("invalid %s: must be greater than 0", key)
+	}
+	return nil
+}
+
+func validateNonNegativeEnvInt(key string) error {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
+	}
+	if i < 0 {
+		return fmt.Errorf("invalid %s: must be non-negative", key)
+	}
+	return nil
+}
+
+func validatePositiveEnvDuration(key string) error {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("invalid %s: must be greater than 0", key)
+	}
+	return nil
 }

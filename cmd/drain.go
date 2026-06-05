@@ -75,14 +75,13 @@ var drainCmd = &cobra.Command{
 		); err != nil {
 			return err
 		}
+		if err := validateDrainCommandConfig(); err != nil {
+			return err
+		}
 
 		ctx := command.Context()
 		if ctx == nil {
 			ctx = context.Background()
-		}
-
-		if _, err := parseDrainOutputFormat(drainOutputFormat); err != nil {
-			return err
 		}
 
 		kubeConfigMode := os.Getenv("KUBE_CONFIG")
@@ -187,6 +186,57 @@ func init() {
 	drainCmd.Flags().StringVar(&podRetryBackoff, "pod-retry-backoff", "10s", "Pod 제거 재시도 간격")
 	drainCmd.Flags().StringVar(&podDeletionTimeout, "pod-deletion-timeout", "2m", "Pod 삭제 대기 타임아웃")
 	drainCmd.Flags().StringVar(&podCheckInterval, "pod-check-interval", "20s", "Pod 삭제 상태 확인 주기")
+}
+
+func validateDrainCommandConfig() error {
+	if err := node.ValidateDrainPolicyEnv(); err != nil {
+		return err
+	}
+	if err := pod.ValidateEvictionConfigEnv(); err != nil {
+		return err
+	}
+	if _, err := parseDrainOutputFormat(drainOutputFormat); err != nil {
+		return err
+	}
+	if err := validateDrainNodeSelectionStrategy(drainNodeSelectionStrategy); err != nil {
+		return err
+	}
+	if err := validateDrainLockMode(drainLockMode); err != nil {
+		return err
+	}
+	if err := validatePositiveDurationString("drain-lock-lease-duration", drainLockLeaseDuration); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateDrainNodeSelectionStrategy(strategy string) error {
+	switch strings.ToLower(strings.TrimSpace(strategy)) {
+	case "", string(node.DrainNodeSelectionOldest), string(node.DrainNodeSelectionEmptyFirst), string(node.DrainNodeSelectionLeastPods), string(node.DrainNodeSelectionMostPods):
+		return nil
+	default:
+		return fmt.Errorf("지원하지 않는 drain-node-selection: %s", strategy)
+	}
+}
+
+func validateDrainLockMode(mode string) error {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "local", "kubernetes", "none":
+		return nil
+	default:
+		return fmt.Errorf("지원하지 않는 drain-lock-mode: %s", mode)
+	}
+}
+
+func validatePositiveDurationString(flagName string, value string) error {
+	duration, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", flagName, err)
+	}
+	if duration <= 0 {
+		return fmt.Errorf("invalid %s: must be greater than 0", flagName)
+	}
+	return nil
 }
 
 func parseDrainOutputFormat(format string) (string, error) {
