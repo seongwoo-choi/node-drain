@@ -633,6 +633,59 @@ func TestEvictPodCanDeleteAfterSuccessfulEvictionWhenEnabled(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestEvictPodHonorsForceProblemPodsDisabledForGracePeriod(t *testing.T) {
+	problemPod := coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "problem-pod",
+			Namespace: "default",
+		},
+		Status: coreV1.PodStatus{
+			Phase: coreV1.PodPending,
+			ContainerStatuses: []coreV1.ContainerStatus{
+				{
+					Name: "main-container",
+					State: coreV1.ContainerState{
+						Waiting: &coreV1.ContainerStateWaiting{
+							Reason: "ImagePullBackOff",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	client := fake.NewSimpleClientset()
+	_, err := client.CoreV1().Pods(problemPod.Namespace).Create(context.Background(), &problemPod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	var observedGracePeriods []int64
+	client.PrependReactor("delete", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		deleteAction, ok := action.(k8stesting.DeleteAction)
+		if !ok {
+			return false, nil, nil
+		}
+		opts := deleteAction.GetDeleteOptions()
+		if opts.GracePeriodSeconds != nil {
+			observedGracePeriods = append(observedGracePeriods, *opts.GracePeriodSeconds)
+		}
+		return false, nil, nil
+	})
+
+	cfg := DefaultEvictionConfig()
+	cfg.EvictionMode = EvictionModeDelete
+	cfg.ForceProblemPods = false
+
+	_, err = evictPod(context.Background(), client, problemPod, cfg)
+	assert.NoError(t, err)
+
+	if len(observedGracePeriods) != 1 {
+		t.Fatalf("delete grace period 관측 횟수 불일치: got=%d want=1", len(observedGracePeriods))
+	}
+	if observedGracePeriods[0] != 60 {
+		t.Fatalf("force-problem-pods=false grace period 불일치: got=%d want=60", observedGracePeriods[0])
+	}
+}
+
 func TestIsBatchJob(t *testing.T) {
 	tests := []struct {
 		name     string

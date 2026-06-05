@@ -418,7 +418,7 @@ func evictPod(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Po
 	}
 
 	gracePeriod := int64(60)
-	if isPodInProblemState(podObj) {
+	if cfg.ForceProblemPods && isPodInProblemState(podObj) {
 		gracePeriod = int64(0)
 		slog.Info("문제 상태 파드 강제 삭제", "pod", pod.Name, "status", podObj.Status.Phase)
 	}
