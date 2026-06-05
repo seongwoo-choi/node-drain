@@ -226,6 +226,28 @@ func TestEvictPodsWithReportCountsProblemPodForceDelete(t *testing.T) {
 	assert.Equal(t, 1, report.ProblemPodsForced)
 }
 
+func TestEvictPodWithRetryNormalizesPartialConfig(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	pod := coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "partial-config-pod",
+			Namespace: "default",
+		},
+		Spec: coreV1.PodSpec{
+			NodeName: "node-1",
+		},
+	}
+	_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), &pod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	outcome, err := evictPodWithRetry(context.Background(), client, pod, &EvictionConfig{
+		DeleteAfterEviction: true,
+	})
+	assert.NoError(t, err)
+	assert.True(t, outcome.evicted)
+	assert.True(t, outcome.deleted)
+}
+
 func TestEvictPodsWithReportReturnsContextError(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	pod := &coreV1.Pod{
@@ -593,6 +615,21 @@ func TestWaitForPodDeletion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWaitForPodDeletionNormalizesPartialConfig(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	pod := coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "already-gone-pod",
+			Namespace: "default",
+		},
+	}
+
+	err := waitForPodDeletion(context.Background(), client, pod, &EvictionConfig{
+		PodDeletionTimeout: 20 * time.Millisecond,
+	})
+	assert.NoError(t, err)
 }
 
 func TestEvictPodDoesNotDeleteAfterSuccessfulEvictionByDefault(t *testing.T) {

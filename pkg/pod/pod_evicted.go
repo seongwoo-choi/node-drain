@@ -278,6 +278,7 @@ func normalizeEvictionConfig(cfg *EvictionConfig) *EvictionConfig {
 }
 
 func evictPodWithRetry(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod, cfg *EvictionConfig) (podEvictionOutcome, error) {
+	cfg = normalizeEvictionConfig(cfg)
 	var lastErr error
 	var lastOutcome podEvictionOutcome
 
@@ -408,6 +409,7 @@ func getPDBsWithCache(ctx context.Context, clientSet kubernetes.Interface, names
 }
 
 func evictPod(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod, cfg *EvictionConfig) (podEvictionOutcome, error) {
+	cfg = normalizeEvictionConfig(cfg)
 	podObj, err := clientSet.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metaV1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		slog.Info("파드가 이미 제거됨", "pod", pod.Name)
@@ -540,6 +542,7 @@ func isPodInProblemState(pod *coreV1.Pod) bool {
 }
 
 func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod, cfg *EvictionConfig) error {
+	cfg = normalizeEvictionConfig(cfg)
 	timeoutMultiplier := 1.0
 	if isBatchJob(pod) {
 		timeoutMultiplier = 1.5
