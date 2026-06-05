@@ -114,11 +114,10 @@ jobs:
             --drain-max-absolute "${{ inputs.drain_max_absolute }}" \
             --drain-max-fraction "${{ inputs.drain_max_fraction }}" \
             --drain-safety-max-allocate-rate "${{ inputs.drain_safety_max_allocate_rate }}" \
-            --drain-progressive "${{ inputs.drain_progressive }}" \
+            --drain-progressive="${{ inputs.drain_progressive }}" \
             --pod-eviction-mode "${{ inputs.pod_eviction_mode }}" \
-            --force "${{ inputs.force }}" \
-            --force-problem-pods "${{ inputs.force_problem_pods }}" \
-            --pdb-token "${{ inputs.pdb_token }}" \
+            --force="${{ inputs.force }}" \
+            --force-problem-pods="${{ inputs.force_problem_pods }}" \
+            --pdb-token="${{ inputs.pdb_token }}" \
             --pdb-token-max-in-flight "${{ inputs.pdb_token_max_in_flight }}"
-
 
