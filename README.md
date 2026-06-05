@@ -421,12 +421,12 @@ drainNodeCount = floor(lenNodes * drainRate)
 
 ```text
 INFO Karpenter Allocate Rate 사용량 조회 커맨드를 실행합니다.
-INFO query query="karpenter_nodepools_usage{nodepool=\"nodepool-name\",resource_type=\"memory\",cluster=\"cluster-name\"}"
-INFO query query="sum(karpenter_nodes_total_pod_requests{nodepool=\"nodepool-name\",resource_type=\"memory\",cluster=\"cluster-name\"} + karpenter_nodes_total_daemon_requests{nodepool=\"nodepool-name\",resource_type=\"memory\",cluster=\"cluster-name\"})"
+INFO query query="max(karpenter_nodepools_usage{nodepool=\"nodepool-name\",resource_type=\"memory\",cluster=\"cluster-name\"})"
+INFO query query="sum(max without (container,endpoint,instance,job,namespace,pod,service) (karpenter_nodes_total_pod_requests{nodepool=\"nodepool-name\",resource_type=\"memory\",cluster=\"cluster-name\"})) + sum(max without (container,endpoint,instance,job,namespace,pod,service) (karpenter_nodes_total_daemon_requests{nodepool=\"nodepool-name\",resource_type=\"memory\",cluster=\"cluster-name\"}))"
 INFO Karpenter nodepoolUsage="331 GB"
 INFO Karpenter podRequest="91 GB"
-INFO query query="karpenter_nodepools_usage{nodepool=\"nodepool-name\",resource_type=\"cpu\",cluster=\"cluster-name\"}"
-INFO query query="sum(karpenter_nodes_total_pod_requests{nodepool=\"nodepool-name\",resource_type=\"cpu\",cluster=\"cluster-name\"} + karpenter_nodes_total_daemon_requests{nodepool=\"nodepool-name\",resource_type=\"cpu\",cluster=\"cluster-name\"})"
+INFO query query="max(karpenter_nodepools_usage{nodepool=\"nodepool-name\",resource_type=\"cpu\",cluster=\"cluster-name\"})"
+INFO query query="sum(max without (container,endpoint,instance,job,namespace,pod,service) (karpenter_nodes_total_pod_requests{nodepool=\"nodepool-name\",resource_type=\"cpu\",cluster=\"cluster-name\"})) + sum(max without (container,endpoint,instance,job,namespace,pod,service) (karpenter_nodes_total_daemon_requests{nodepool=\"nodepool-name\",resource_type=\"cpu\",cluster=\"cluster-name\"}))"
 INFO Karpenter nodepoolUsage="48 vCPU"
 INFO Karpenter podRequest="34 vCPU"
 INFO Karpenter memoryAllocateRate="27 %"

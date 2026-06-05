@@ -2,6 +2,7 @@ package karpenter
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 
@@ -59,6 +60,16 @@ func vectorOf(value float64) prometheusModel.Vector {
 	}
 }
 
+func vectorOfMany(values ...float64) prometheusModel.Vector {
+	vector := make(prometheusModel.Vector, 0, len(values))
+	for _, value := range values {
+		vector = append(vector, &prometheusModel.Sample{
+			Value: prometheusModel.SampleValue(value),
+		})
+	}
+	return vector
+}
+
 func TestGetKarpenterNodepoolUsageFallsBackToLegacyMetric(t *testing.T) {
 	querier := fakeMetricsQuerier{
 		usageByResource: map[string]float64{"memory": 200 * 1000 * 1000 * 1000},
@@ -74,6 +85,51 @@ func TestGetKarpenterNodepoolUsageFallsBackToLegacyMetric(t *testing.T) {
 	}
 	if got != 200 {
 		t.Fatalf("GetKarpenterNodepoolUsage() = %.0f, want=200", got)
+	}
+}
+
+func TestGetKarpenterNodepoolUsageQueriesSingleAggregatedSeries(t *testing.T) {
+	querier := &recordingMetricsQuerier{}
+	client := NewClientForCluster("nodepool-a", "cluster-a", querier)
+
+	_, err := client.GetKarpenterNodepoolUsage(context.Background(), "memory")
+	if err != nil {
+		t.Fatalf("GetKarpenterNodepoolUsage() error = %v", err)
+	}
+	if len(querier.queries) != 1 {
+		t.Fatalf("query count = %d, want=1", len(querier.queries))
+	}
+	query := querier.queries[0]
+	if !strings.Contains(query, `max(karpenter_nodepools_usage{`) {
+		t.Fatalf("query should aggregate nodepool usage with max: %s", query)
+	}
+	if !strings.Contains(query, `cluster="cluster-a"`) {
+		t.Fatalf("query missing cluster matcher: %s", query)
+	}
+}
+
+func TestGetKarpenterPodRequestDeduplicatesScrapeTargets(t *testing.T) {
+	querier := &recordingMetricsQuerier{}
+	client := NewClientForCluster("nodepool-a", "cluster-a", querier)
+
+	_, err := client.GetKarpenterPodRequest(context.Background(), "cpu")
+	if err != nil {
+		t.Fatalf("GetKarpenterPodRequest() error = %v", err)
+	}
+	if len(querier.queries) != 1 {
+		t.Fatalf("query count = %d, want=1", len(querier.queries))
+	}
+	query := querier.queries[0]
+	for _, want := range []string{
+		"sum(max without (container,endpoint,instance,job,namespace,pod,service) (karpenter_nodes_total_pod_requests{",
+		"sum(max without (container,endpoint,instance,job,namespace,pod,service) (karpenter_nodes_total_daemon_requests{",
+		`nodepool="nodepool-a"`,
+		`cluster="cluster-a"`,
+		`resource_type="cpu"`,
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("query missing %q: %s", want, query)
+		}
 	}
 }
 
@@ -99,6 +155,20 @@ func TestGetAllocateRateScopesQueriesByCluster(t *testing.T) {
 		if !strings.Contains(query, `resource_type="cpu"`) {
 			t.Fatalf("query missing resource_type matcher: %s", query)
 		}
+	}
+}
+
+func TestParseUsageResultRejectsAmbiguousResults(t *testing.T) {
+	_, err := parseUsageResult(vectorOfMany(1, 2), "cpu")
+	if err == nil {
+		t.Fatal("expected ambiguous result error")
+	}
+}
+
+func TestParseUsageResultRejectsInvalidSampleValue(t *testing.T) {
+	_, err := parseUsageResult(vectorOf(math.NaN()), "cpu")
+	if err == nil {
+		t.Fatal("expected invalid sample value error")
 	}
 }
 

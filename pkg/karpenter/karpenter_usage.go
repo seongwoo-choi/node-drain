@@ -20,6 +20,8 @@ var nodepoolUsageMetricNames = []string{
 	"karpenter_nodepool_usage",
 }
 
+const prometheusScrapeDedupeLabels = "container,endpoint,instance,job,namespace,pod,service"
+
 // MetricsQuerier is a minimal contract for querying metrics backends.
 type MetricsQuerier interface {
 	Query(ctx context.Context, query string) (prometheusModel.Vector, error)
@@ -90,10 +92,20 @@ func NewClientForCluster(nodepoolName string, clusterName string, querier Metric
 // GetKarpenterPodRequest returns pod request usage for a resource type.
 func (c *Client) GetKarpenterPodRequest(ctx context.Context, resourceType string) (float64, error) {
 	matchers := c.resourceLabelMatchers(resourceType)
+	podRequests := fmt.Sprintf(
+		"max without (%s) (karpenter_nodes_total_pod_requests{%s})",
+		prometheusScrapeDedupeLabels,
+		matchers,
+	)
+	daemonRequests := fmt.Sprintf(
+		"max without (%s) (karpenter_nodes_total_daemon_requests{%s})",
+		prometheusScrapeDedupeLabels,
+		matchers,
+	)
 	query := fmt.Sprintf(
-		"sum(karpenter_nodes_total_pod_requests{%s} + karpenter_nodes_total_daemon_requests{%s})",
-		matchers,
-		matchers,
+		"sum(%s) + sum(%s)",
+		podRequests,
+		daemonRequests,
 	)
 	slog.Info("query", "query", query)
 
@@ -110,7 +122,7 @@ func (c *Client) GetKarpenterNodepoolUsage(ctx context.Context, resourceType str
 	matchers := c.resourceLabelMatchers(resourceType)
 	for _, metricName := range nodepoolUsageMetricNames {
 		query := fmt.Sprintf(
-			"%s{%s}",
+			"max(%s{%s})",
 			metricName,
 			matchers,
 		)
@@ -182,20 +194,19 @@ func parseUsageResult(result prometheusModel.Vector, resourceType string) (float
 	if len(result) == 0 {
 		return 0, fmt.Errorf("empty prometheus result for resource type %s", resourceType)
 	}
+	if len(result) > 1 {
+		return 0, fmt.Errorf("expected single prometheus result for resource type %s, got %d", resourceType, len(result))
+	}
 
 	sample := result[0]
+	usage := float64(sample.Value)
+	if math.IsNaN(usage) || math.IsInf(usage, 0) {
+		return 0, fmt.Errorf("invalid %s prometheus value: %s", resourceType, sample.Value.String())
+	}
 	switch resourceType {
 	case "memory":
-		usage, err := strconv.ParseFloat(sample.Value.String(), 64)
-		if err != nil {
-			return 0, fmt.Errorf("parse memory usage: %w", err)
-		}
 		return usage / (1000 * 1000 * 1000), nil
 	case "cpu":
-		usage, err := strconv.ParseFloat(sample.Value.String(), 64)
-		if err != nil {
-			return 0, fmt.Errorf("parse cpu usage: %w", err)
-		}
 		return usage, nil
 	default:
 		return 0, fmt.Errorf("unsupported resource type: %s", resourceType)
