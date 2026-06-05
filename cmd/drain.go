@@ -30,6 +30,7 @@ import (
 )
 
 const drainNotificationTimeout = 10 * time.Second
+const maxKubernetesLeaseDurationSeconds = int64(1<<31 - 1)
 
 var (
 	drainPolicy                string
@@ -528,10 +529,7 @@ func acquireKubernetesDrainRunLock(ctx context.Context, clientSet kubernetes.Int
 		return nil, err
 	}
 
-	durationSeconds := int32(duration.Seconds())
-	if durationSeconds <= 0 {
-		durationSeconds = 1
-	}
+	durationSeconds := kubernetesLeaseDurationSeconds(duration)
 
 	holder := drainLockHolderIdentity()
 	leaseName := kubernetesDrainLockLeaseName(clusterName, nodepoolName)
@@ -658,6 +656,23 @@ func kubernetesLeaseRenewalRequestTimeout(duration time.Duration) time.Duration 
 	return timeout
 }
 
+func kubernetesLeaseDurationSeconds(duration time.Duration) int32 {
+	if duration <= 0 {
+		return 1
+	}
+	seconds := int64(duration / time.Second)
+	if duration%time.Second != 0 {
+		seconds++
+	}
+	if seconds <= 0 {
+		return 1
+	}
+	if seconds > maxKubernetesLeaseDurationSeconds {
+		return int32(maxKubernetesLeaseDurationSeconds)
+	}
+	return int32(seconds)
+}
+
 func (l *kubernetesLeaseLock) renew(ctx context.Context, duration time.Duration) error {
 	leases := l.clientSet.CoordinationV1().Leases(l.namespace)
 	lease, err := leases.Get(ctx, l.name, metaV1.GetOptions{})
@@ -667,7 +682,7 @@ func (l *kubernetesLeaseLock) renew(ctx context.Context, duration time.Duration)
 	if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != l.holder {
 		return fmt.Errorf("lease holder changed")
 	}
-	durationSeconds := int32(duration.Seconds())
+	durationSeconds := kubernetesLeaseDurationSeconds(duration)
 	now := metaV1.NewMicroTime(time.Now())
 	lease.Spec.LeaseDurationSeconds = &durationSeconds
 	lease.Spec.RenewTime = &now

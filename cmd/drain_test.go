@@ -505,6 +505,29 @@ func TestAcquireKubernetesDrainRunLockRejectsSubsecondLeaseDuration(t *testing.T
 	}
 }
 
+func TestAcquireKubernetesDrainRunLockRoundsLeaseDurationUp(t *testing.T) {
+	ctx := context.Background()
+	clientSet := fake.NewSimpleClientset()
+
+	lock, err := acquireDrainRunLock(ctx, clientSet, "test-cluster", "test-roundup-nodepool", "kubernetes", "default", "1500ms")
+	if err != nil {
+		t.Fatalf("acquireDrainRunLock kubernetes failed: %v", err)
+	}
+	defer releaseDrainRunLock(ctx, lock)
+
+	leaseName := kubernetesDrainLockLeaseName("test-cluster", "test-roundup-nodepool")
+	lease, err := clientSet.CoordinationV1().Leases("default").Get(ctx, leaseName, metaV1.GetOptions{})
+	if err != nil {
+		t.Fatalf("lease lookup failed: %v", err)
+	}
+	if lease.Spec.LeaseDurationSeconds == nil {
+		t.Fatal("expected lease duration seconds")
+	}
+	if got := *lease.Spec.LeaseDurationSeconds; got != 2 {
+		t.Fatalf("lease duration seconds = %d, want=2", got)
+	}
+}
+
 func TestKubernetesDrainRunLockReleaseDeletesLease(t *testing.T) {
 	ctx := context.Background()
 	clientSet := fake.NewSimpleClientset()
@@ -572,6 +595,28 @@ func TestKubernetesLeaseRenewalRequestTimeoutCapsLongLeaseDuration(t *testing.T)
 	timeout := kubernetesLeaseRenewalRequestTimeout(10 * time.Minute)
 	if timeout != 10*time.Second {
 		t.Fatalf("renewal timeout = %s, want 10s", timeout)
+	}
+}
+
+func TestKubernetesLeaseDurationSecondsRoundsUpFractionalDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration time.Duration
+		want     int32
+	}{
+		{name: "zero", duration: 0, want: 1},
+		{name: "exact second", duration: time.Second, want: 1},
+		{name: "fractional second", duration: 1500 * time.Millisecond, want: 2},
+		{name: "minutes", duration: 10 * time.Minute, want: 600},
+		{name: "overflow capped", duration: time.Duration(maxKubernetesLeaseDurationSeconds+1) * time.Second, want: int32(maxKubernetesLeaseDurationSeconds)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := kubernetesLeaseDurationSeconds(tt.duration); got != tt.want {
+				t.Fatalf("kubernetesLeaseDurationSeconds(%s) = %d, want=%d", tt.duration, got, tt.want)
+			}
+		})
 	}
 }
 
