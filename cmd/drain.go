@@ -63,6 +63,7 @@ var (
 var drainCmd = &cobra.Command{
 	Use:   "drain",
 	Short: "노드 드레인 실행",
+	Args:  cobra.NoArgs,
 	RunE: func(command *cobra.Command, args []string) error {
 		applyRootFlagEnv(command)
 		applyDrainFlagEnv(command)

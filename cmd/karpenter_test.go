@@ -31,6 +31,17 @@ func TestAllocateRateCommandRequiresTargetSettings(t *testing.T) {
 	}
 }
 
+func TestAllocateRateCommandRejectsUnexpectedArgs(t *testing.T) {
+	if allocateRateCmd.Args == nil {
+		t.Fatal("allocate-rate command Args is nil")
+	}
+
+	err := allocateRateCmd.Args(allocateRateCmd, []string{"false"})
+	if err == nil {
+		t.Fatal("expected unexpected arg error")
+	}
+}
+
 func TestHandleKarpenterAllocateRateReturnsPrometheusClientError(t *testing.T) {
 	t.Setenv("PROMETHEUS_ADDRESS", "://bad")
 	t.Setenv("PROMETHEUS_SCOPE_ORG_ID", "organization-dev")

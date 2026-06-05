@@ -20,6 +20,7 @@ var (
 	allocateRateCmd = &cobra.Command{
 		Use:   "allocate-rate",
 		Short: "Allocate Rate 사용량 조회",
+		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			applyRootFlagEnv(command)
 

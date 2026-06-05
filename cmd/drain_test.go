@@ -94,6 +94,17 @@ func TestDrainCommandRequiresTargetSettings(t *testing.T) {
 	}
 }
 
+func TestDrainCommandRejectsUnexpectedArgs(t *testing.T) {
+	if drainCmd.Args == nil {
+		t.Fatal("drain command Args is nil")
+	}
+
+	err := drainCmd.Args(drainCmd, []string{"false"})
+	if err == nil {
+		t.Fatal("expected unexpected arg error")
+	}
+}
+
 func TestAcquireDrainRunLockBlocksDuplicate(t *testing.T) {
 	lockFile, err := acquireLocalDrainRunLock("test-cluster", "test-nodepool")
 	if err != nil {
