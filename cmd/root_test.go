@@ -184,6 +184,27 @@ func TestDrainWorkflowPassesPodTimeoutControls(t *testing.T) {
 	}
 }
 
+func TestDrainWorkflowUsesKubernetesLockByDefault(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/drain.yml")
+	if err != nil {
+		t.Fatalf("read workflow failed: %v", err)
+	}
+	text := string(workflow)
+	for _, required := range []string{
+		"drain_lock_mode:",
+		`default: "kubernetes"`,
+		"drain_lock_namespace:",
+		"drain_lock_lease_duration:",
+		`--drain-lock-mode "${{ inputs.drain_lock_mode }}"`,
+		`--drain-lock-namespace "${{ inputs.drain_lock_namespace }}"`,
+		`--drain-lock-lease-duration "${{ inputs.drain_lock_lease_duration }}"`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("drain workflow missing kubernetes lock control: %s", required)
+		}
+	}
+}
+
 func TestLegacyWorkflowAvoidsPlaceholderDefaults(t *testing.T) {
 	workflow, err := os.ReadFile("../.github/workflows/eks-node-drain-based-on-karpenter-allocate-rate.yaml")
 	if err != nil {
@@ -214,6 +235,9 @@ func TestLegacyWorkflowPassesDrainSafetyFlags(t *testing.T) {
 		`cmd+=(--drain-max-absolute "${{ inputs.DRAIN_MAX_ABSOLUTE }}")`,
 		`cmd+=(--drain-max-fraction "${{ inputs.DRAIN_MAX_FRACTION }}")`,
 		`cmd+=(--drain-safety-max-allocate-rate "${{ inputs.DRAIN_SAFETY_MAX_ALLOCATE_RATE }}")`,
+		`cmd+=(--drain-lock-mode "${{ inputs.DRAIN_LOCK_MODE }}")`,
+		`cmd+=(--drain-lock-namespace "${{ inputs.DRAIN_LOCK_NAMESPACE }}")`,
+		`cmd+=(--drain-lock-lease-duration "${{ inputs.DRAIN_LOCK_LEASE_DURATION }}")`,
 		`cmd+=(--force="${{ inputs.FORCE }}")`,
 		`cmd+=(--pdb-token="${{ inputs.PDB_TOKEN }}")`,
 		`cmd+=(--pod-eviction-timeout "${{ inputs.POD_EVICTION_TIMEOUT }}")`,
@@ -224,6 +248,24 @@ func TestLegacyWorkflowPassesDrainSafetyFlags(t *testing.T) {
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("legacy workflow missing required safety pattern: %s", required)
+		}
+	}
+}
+
+func TestLegacyWorkflowUsesKubernetesLockByDefault(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/eks-node-drain-based-on-karpenter-allocate-rate.yaml")
+	if err != nil {
+		t.Fatalf("read workflow failed: %v", err)
+	}
+	text := string(workflow)
+	for _, required := range []string{
+		"DRAIN_LOCK_MODE:",
+		"default: 'kubernetes'",
+		"DRAIN_LOCK_NAMESPACE:",
+		"DRAIN_LOCK_LEASE_DURATION:",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("legacy workflow missing kubernetes lock default: %s", required)
 		}
 	}
 }

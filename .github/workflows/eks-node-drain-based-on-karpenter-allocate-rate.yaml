@@ -70,6 +70,23 @@ on:
           - 'false'
         required: false
         default: 'true'
+      DRAIN_LOCK_MODE:
+        description: '중복 실행 lock 방식'
+        type: choice
+        options:
+          - 'kubernetes'
+          - 'local'
+          - 'none'
+        required: false
+        default: 'kubernetes'
+      DRAIN_LOCK_NAMESPACE:
+        description: 'Kubernetes Lease lock namespace'
+        required: false
+        default: 'kube-system'
+      DRAIN_LOCK_LEASE_DURATION:
+        description: 'Kubernetes Lease lock 만료 시간'
+        required: false
+        default: '10m'
       POD_EVICTION_MODE:
         description: '파드 제거 방식'
         type: choice
@@ -209,6 +226,9 @@ jobs:
           cmd+=(--drain-max-fraction "${{ inputs.DRAIN_MAX_FRACTION }}")
           cmd+=(--drain-safety-max-allocate-rate "${{ inputs.DRAIN_SAFETY_MAX_ALLOCATE_RATE }}")
           cmd+=(--drain-progressive="${{ inputs.DRAIN_PROGRESSIVE }}")
+          cmd+=(--drain-lock-mode "${{ inputs.DRAIN_LOCK_MODE }}")
+          cmd+=(--drain-lock-namespace "${{ inputs.DRAIN_LOCK_NAMESPACE }}")
+          cmd+=(--drain-lock-lease-duration "${{ inputs.DRAIN_LOCK_LEASE_DURATION }}")
           cmd+=(--pod-eviction-mode "${{ inputs.POD_EVICTION_MODE }}")
           cmd+=(--force="${{ inputs.FORCE }}")
           cmd+=(--force-problem-pods="${{ inputs.FORCE_PROBLEM_PODS }}")

@@ -52,6 +52,21 @@ on:
         required: false
         default: "true"
         type: string
+      drain_lock_mode:
+        description: "중복 실행 lock 방식(local|kubernetes|none). Actions 기본은 distributed lock"
+        required: false
+        default: "kubernetes"
+        type: string
+      drain_lock_namespace:
+        description: "Kubernetes Lease lock namespace"
+        required: false
+        default: "kube-system"
+        type: string
+      drain_lock_lease_duration:
+        description: "Kubernetes Lease lock 만료 시간"
+        required: false
+        default: "10m"
+        type: string
 
       # 파드 제거 정책
       pod_eviction_mode:
@@ -149,6 +164,9 @@ jobs:
             --drain-max-fraction "${{ inputs.drain_max_fraction }}" \
             --drain-safety-max-allocate-rate "${{ inputs.drain_safety_max_allocate_rate }}" \
             --drain-progressive="${{ inputs.drain_progressive }}" \
+            --drain-lock-mode "${{ inputs.drain_lock_mode }}" \
+            --drain-lock-namespace "${{ inputs.drain_lock_namespace }}" \
+            --drain-lock-lease-duration "${{ inputs.drain_lock_lease_duration }}" \
             --pod-eviction-mode "${{ inputs.pod_eviction_mode }}" \
             --force="${{ inputs.force }}" \
             --force-problem-pods="${{ inputs.force_problem_pods }}" \

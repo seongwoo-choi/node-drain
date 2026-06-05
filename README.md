@@ -369,7 +369,10 @@ GitHub UI에서 **Actions → drain → Run workflow**로 실행할 수 있습�
 
 - `cluster_name`, `nodepool_name`, `prometheus_address`, `prometheus_org_id`
 - 드레인 정책: `drain_min`, `drain_max_absolute`, `drain_max_fraction`, `drain_safety_max_allocate_rate`, `drain_progressive`
+- 중복 실행 lock: `drain_lock_mode`, `drain_lock_namespace`, `drain_lock_lease_duration`
+  - GitHub Actions 기본값은 `drain_lock_mode=kubernetes`입니다. 같은 NodePool drain이 서로 다른 runner에서 동시에 실행되는 것을 막기 위해 Kubernetes `Lease`를 사용합니다.
 - 파드 정책: `pod_eviction_mode`, `force`, `force_problem_pods`, `pod_delete_after_eviction`, `pdb_token`, `pdb_token_max_in_flight`
+- 파드 timeout: `pod_eviction_timeout`, `pod_node_termination_timeout`, `pod_node_termination_check_tick`, `pod_post_eviction_node_delay`
 
 ---
 
