@@ -12,7 +12,9 @@ import (
 
 	"github.com/spf13/cobra"
 	coreV1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -122,6 +124,10 @@ func TestRunNodeDrainAnalysisOutputsDryRunReportWithoutMutatingCluster(t *testin
 	if _, err := clientSet.CoreV1().Pods(p.Namespace).Create(context.Background(), p, metaV1.CreateOptions{}); err != nil {
 		t.Fatalf("pod create failed: %v", err)
 	}
+	pdb := analyzeTestPDB("default", "blocking-pdb", 0)
+	if _, err := clientSet.PolicyV1().PodDisruptionBudgets("default").Create(context.Background(), pdb, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("pdb create failed: %v", err)
+	}
 
 	var buf bytes.Buffer
 	err := runNodeDrainAnalysis(context.Background(), clientSet, node.DrainDependencies{
@@ -140,8 +146,11 @@ func TestRunNodeDrainAnalysisOutputsDryRunReportWithoutMutatingCluster(t *testin
 		`"dry_run": true`,
 		`"planned_drain_node_count": 1`,
 		`"planned_pod_count": 1`,
+		`"pdb_blocked_pods": 1`,
 		`"node_name": "node-1"`,
 		`"name": "workload-pod"`,
+		`"pdb_blockers": [`,
+		`"name": "blocking-pdb"`,
 	} {
 		if !strings.Contains(buf.String(), want) {
 			t.Fatalf("analysis json missing %q: %s", want, buf.String())
@@ -227,6 +236,9 @@ func analyzeTestPod(namespace string, name string, nodeName string) *coreV1.Pod 
 		ObjectMeta: metaV1.ObjectMeta{
 			Namespace: namespace,
 			Name:      name,
+			Labels: map[string]string{
+				"app": "test",
+			},
 			OwnerReferences: []metaV1.OwnerReference{
 				{
 					Kind: "ReplicaSet",
@@ -239,6 +251,24 @@ func analyzeTestPod(namespace string, name string, nodeName string) *coreV1.Pod 
 		},
 		Status: coreV1.PodStatus{
 			Phase: coreV1.PodRunning,
+		},
+	}
+}
+
+func analyzeTestPDB(namespace string, name string, disruptionsAllowed int32) *policyv1.PodDisruptionBudget {
+	return &policyv1.PodDisruptionBudget{
+		ObjectMeta: metaV1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+		},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MinAvailable: &intstr.IntOrString{Type: intstr.Int, IntVal: 1},
+			Selector: &metaV1.LabelSelector{
+				MatchLabels: map[string]string{"app": "test"},
+			},
+		},
+		Status: policyv1.PodDisruptionBudgetStatus{
+			DisruptionsAllowed: disruptionsAllowed,
 		},
 	}
 }

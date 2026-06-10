@@ -59,6 +59,13 @@ type podEvictionResult struct {
 	err     error
 }
 
+// PDBBlocker describes a PodDisruptionBudget that currently blocks a pod eviction.
+type PDBBlocker struct {
+	Namespace          string
+	Name               string
+	DisruptionsAllowed int32
+}
+
 type pdbCache struct {
 	sync.RWMutex
 	cache map[string]pdbCacheEntry
@@ -346,23 +353,51 @@ func evictPodWithRetry(ctx context.Context, clientSet kubernetes.Interface, pod 
 }
 
 func checkPDB(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod) error {
-	pdbs, err := listPDBs(ctx, clientSet, pod.Namespace)
+	blockers, err := GetPDBBlockers(ctx, clientSet, &pod)
 	if err != nil {
 		return fmt.Errorf("PDB 조회 실패: %w", err)
 	}
+	if len(blockers) > 0 {
+		blocker := blockers[0]
+		return fmt.Errorf("PDB %s 에 의해 eviction 제한됨 (허용 disruption: %d)", blocker.Name, blocker.DisruptionsAllowed)
+	}
 
+	return nil
+}
+
+// GetPDBBlockers returns PDBs that match the pod and currently allow no disruption.
+func GetPDBBlockers(ctx context.Context, clientSet kubernetes.Interface, podObj *coreV1.Pod) ([]PDBBlocker, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if clientSet == nil {
+		return nil, fmt.Errorf("kubernetes client is required")
+	}
+	if podObj == nil {
+		return nil, fmt.Errorf("pod is required")
+	}
+
+	pdbs, err := listPDBs(ctx, clientSet, podObj.Namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	blockers := make([]PDBBlocker, 0)
 	for _, pdb := range pdbs {
 		selector, selectorErr := metaV1.LabelSelectorAsSelector(pdb.Spec.Selector)
 		if selectorErr != nil {
 			slog.ErrorContext(ctx, "PDB 레이블 선택자 변환 실패", "pdb", pdb.Name, "error", selectorErr)
 			continue
 		}
-		if selector.Matches(labels.Set(pod.Labels)) && pdb.Status.DisruptionsAllowed < 1 {
-			return fmt.Errorf("PDB %s 에 의해 eviction 제한됨 (허용 disruption: %d)", pdb.Name, pdb.Status.DisruptionsAllowed)
+		if selector.Matches(labels.Set(podObj.Labels)) && pdb.Status.DisruptionsAllowed < 1 {
+			blockers = append(blockers, PDBBlocker{
+				Namespace:          pdb.Namespace,
+				Name:               pdb.Name,
+				DisruptionsAllowed: pdb.Status.DisruptionsAllowed,
+			})
 		}
 	}
-
-	return nil
+	return blockers, nil
 }
 
 func listPDBs(ctx context.Context, clientSet kubernetes.Interface, namespace string) ([]*policyv1.PodDisruptionBudget, error) {

@@ -14,12 +14,21 @@ type NodeDrainResult struct {
 	PlannedPods     []NodeDrainPodPlan `json:"planned_pods,omitempty"`
 }
 
+// NodeDrainPodPlan describes a pod that would be removed from a node during dry-run analysis.
 type NodeDrainPodPlan struct {
-	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
-	Phase     string `json:"phase"`
-	OwnerKind string `json:"owner_kind,omitempty"`
-	OwnerName string `json:"owner_name,omitempty"`
+	Namespace   string                `json:"namespace"`
+	Name        string                `json:"name"`
+	Phase       string                `json:"phase"`
+	OwnerKind   string                `json:"owner_kind,omitempty"`
+	OwnerName   string                `json:"owner_name,omitempty"`
+	PDBBlockers []NodeDrainPDBBlocker `json:"pdb_blockers,omitempty"`
+}
+
+// NodeDrainPDBBlocker describes a PDB currently blocking a planned pod eviction.
+type NodeDrainPDBBlocker struct {
+	Namespace          string `json:"namespace"`
+	Name               string `json:"name"`
+	DisruptionsAllowed int32  `json:"disruptions_allowed"`
 }
 
 type NodeDrainReport struct {

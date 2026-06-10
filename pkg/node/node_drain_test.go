@@ -11,7 +11,9 @@ import (
 	"time"
 
 	coreV1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metaV1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -646,6 +648,81 @@ func TestNodeDrainWithReportSummarizesDryRunPlan(t *testing.T) {
 	}
 	if report.Summary.SuccessfulNodeCount != 1 {
 		t.Fatalf("successful node count 불일치: got=%d want=1", report.Summary.SuccessfulNodeCount)
+	}
+}
+
+func TestNodeDrainWithReportDryRunIncludesPDBBlockers(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "1")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "true")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	node := newNode(nodepoolName, 1)
+	if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("노드 생성 실패: %v", err)
+	}
+
+	p := newPodOnNode("default", "workload-pod", "node-1", coreV1.PodRunning, "ReplicaSet", "workload-rs")
+	p.Labels = map[string]string{"app": "test"}
+	if _, err := clientSet.CoreV1().Pods(p.Namespace).Create(context.Background(), p, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("파드 생성 실패: %v", err)
+	}
+
+	pdb := &policyv1.PodDisruptionBudget{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "blocking-pdb",
+			Namespace: "default",
+		},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			MinAvailable: &intstr.IntOrString{Type: intstr.Int, IntVal: 1},
+			Selector: &metaV1.LabelSelector{
+				MatchLabels: map[string]string{"app": "test"},
+			},
+		},
+		Status: policyv1.PodDisruptionBudgetStatus{
+			DisruptionsAllowed: 0,
+		},
+	}
+	if _, err := clientSet.PolicyV1().PodDisruptionBudgets("default").Create(context.Background(), pdb, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("PDB 생성 실패: %v", err)
+	}
+
+	report, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: fakeAllocateRateProvider{
+			rates: map[string]int{
+				"memory": 30,
+				"cpu":    30,
+			},
+		},
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     testEvictionConfig(),
+		DryRun:       true,
+	})
+	if err != nil {
+		t.Fatalf("NodeDrainWithReport dry-run 실패: %v", err)
+	}
+	if report.Summary.PDBBlockedPods != 1 {
+		t.Fatalf("dry-run PDB blocked pod count 불일치: got=%d want=1", report.Summary.PDBBlockedPods)
+	}
+	if len(report.Results) != 1 || len(report.Results[0].PlannedPods) != 1 {
+		t.Fatalf("dry-run planned pod 누락: %+v", report.Results)
+	}
+	blockers := report.Results[0].PlannedPods[0].PDBBlockers
+	if len(blockers) != 1 {
+		t.Fatalf("PDB blocker 개수 불일치: got=%d want=1 %+v", len(blockers), blockers)
+	}
+	if blockers[0].Name != "blocking-pdb" || blockers[0].DisruptionsAllowed != 0 {
+		t.Fatalf("PDB blocker 정보 불일치: %+v", blockers[0])
 	}
 }
 

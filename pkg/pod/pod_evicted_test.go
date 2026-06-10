@@ -199,6 +199,38 @@ func TestEvictPodsWithReportCountsPDBBlockedPod(t *testing.T) {
 	assert.Equal(t, 0, report.EvictedPods)
 }
 
+func TestGetPDBBlockersReturnsMatchingZeroDisruptionPDBs(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	pod := &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:      "pod-with-pdb",
+			Namespace: "default",
+			Labels: map[string]string{
+				"app": "test",
+			},
+		},
+	}
+	_, err := client.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	blockingPDB := newTestPDB("default", "blocking-pdb")
+	blockingPDB.Status.DisruptionsAllowed = 0
+	_, err = client.PolicyV1().PodDisruptionBudgets("default").Create(context.Background(), blockingPDB, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	allowedPDB := newTestPDB("default", "allowed-pdb")
+	allowedPDB.Status.DisruptionsAllowed = 1
+	_, err = client.PolicyV1().PodDisruptionBudgets("default").Create(context.Background(), allowedPDB, metaV1.CreateOptions{})
+	assert.NoError(t, err)
+
+	blockers, err := GetPDBBlockers(context.Background(), client, pod)
+	assert.NoError(t, err)
+	assert.Len(t, blockers, 1)
+	assert.Equal(t, "default", blockers[0].Namespace)
+	assert.Equal(t, "blocking-pdb", blockers[0].Name)
+	assert.Equal(t, int32(0), blockers[0].DisruptionsAllowed)
+}
+
 func TestEvictPodsWithReportCountsProblemPodForceDelete(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	oldPendingTime := metaV1.NewTime(time.Now().Add(-11 * time.Minute))

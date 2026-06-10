@@ -441,6 +441,11 @@ func finalizeNodeDrainSummary(summary *types.NodeDrainSummary, results []types.N
 		if result.DryRun {
 			summary.PlannedPodCount += len(result.PlannedPods)
 			summary.TotalPods += len(result.PlannedPods)
+			for _, plannedPod := range result.PlannedPods {
+				if len(plannedPod.PDBBlockers) > 0 {
+					summary.PDBBlockedPods++
+				}
+			}
 		}
 	}
 	summary.TopErrorReasons = topUniqueStrings(errorReasons, 3)
@@ -521,8 +526,19 @@ func getNodeDrainPodPlan(ctx context.Context, clientSet kubernetes.Interface, no
 			plan.OwnerKind = p.OwnerReferences[0].Kind
 			plan.OwnerName = p.OwnerReferences[0].Name
 		}
+		pdbBlockers, blockerErr := pod.GetPDBBlockers(ctx, clientSet, &p)
+		if blockerErr != nil {
+			return nil, fmt.Errorf("pod %s/%s PDB blocker 조회 실패: %w", p.Namespace, p.Name, blockerErr)
+		}
+		for _, blocker := range pdbBlockers {
+			plan.PDBBlockers = append(plan.PDBBlockers, types.NodeDrainPDBBlocker{
+				Namespace:          blocker.Namespace,
+				Name:               blocker.Name,
+				DisruptionsAllowed: blocker.DisruptionsAllowed,
+			})
+		}
 		plans = append(plans, plan)
-		slog.Info("dry-run 제거 대상 pod", "nodeName", nodeName, "namespace", plan.Namespace, "pod", plan.Name, "phase", plan.Phase, "ownerKind", plan.OwnerKind, "ownerName", plan.OwnerName)
+		slog.Info("dry-run 제거 대상 pod", "nodeName", nodeName, "namespace", plan.Namespace, "pod", plan.Name, "phase", plan.Phase, "ownerKind", plan.OwnerKind, "ownerName", plan.OwnerName, "pdbBlockers", len(plan.PDBBlockers))
 	}
 	return plans, nil
 }
