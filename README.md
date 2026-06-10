@@ -339,6 +339,8 @@ Karpenter 관련 메트릭을 조회해 NodePool의 자원 사용률(Allocate Ra
 | `--cluster-name` | `""` | 클러스터 이름(`drain` 필수, PromQL cluster matcher에도 사용) |
 | `--nodepool-name` | `""` | 대상 NodePool 이름(`drain`, `karpenter allocate-rate` 필수) |
 
+테넌트가 분리되지 않은 Prometheus를 사용할 때는 `--prometheus-org-id`를 생략하세요. 이 값이 비어 있으면 `X-Scope-OrgID` 헤더를 전송하지 않습니다. 기존 shell에 `PROMETHEUS_SCOPE_ORG_ID`가 남아 있으면 플래그를 생략해도 환경 변수 값이 사용되므로, non-tenant Prometheus에서는 `unset PROMETHEUS_SCOPE_ORG_ID`로 비운 뒤 실행하세요.
+
 ---
 
 ## 환경 변수
@@ -351,7 +353,7 @@ CLI는 설정을 `명시적으로 전달된 CLI 플래그 > 기존 환경 변수
 | 환경 변수 | 설명 |
 | --- | --- |
 | `PROMETHEUS_ADDRESS` | Prometheus 주소 |
-| `PROMETHEUS_SCOPE_ORG_ID` | `X-Scope-OrgID` 헤더 값 |
+| `PROMETHEUS_SCOPE_ORG_ID` | `X-Scope-OrgID` 헤더 값. 비어 있으면 헤더를 전송하지 않음 |
 | `SLACK_WEBHOOK_URL` | Slack Webhook URL |
 | `KUBE_CONFIG` | kube config 모드(`local/cluster/github_action`) |
 | `CLUSTER_NAME` | 클러스터 이름 |
@@ -596,6 +598,7 @@ subjects:
   - 주소는 Prometheus base URL이어야 합니다. 예: `http://localhost:8080/prometheus`
   - `/api/v1/query`까지 포함한 API endpoint를 넣으면 안 됩니다.
   - 멀티테넌시 환경이면 `--prometheus-org-id`가 맞는지 확인하세요.
+  - 테넌트 미분리 환경이면 `--prometheus-org-id`를 빼고, 기존 `PROMETHEUS_SCOPE_ORG_ID` 환경 변수가 남아 있지 않은지 확인하세요.
 - **Slack 알림이 실패하는 경우**
   - `--slack-webhook-url`이 비어 있거나, Webhook이 200을 반환하지 않으면 실패합니다.
 - **드레인이 오래 걸리거나 멈춘 것처럼 보이는 경우**
