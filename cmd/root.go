@@ -9,13 +9,14 @@ import (
 )
 
 var (
-	prometheusAddress string
-	prometheusOrgID   string
-	slackWebhookURL   string
-	kubeConfig        string
-	kubeConfigPath    string
-	clusterName       string
-	nodepoolName      string
+	prometheusAddress  string
+	prometheusTenantID string
+	prometheusOrgID    string
+	slackWebhookURL    string
+	kubeConfig         string
+	kubeConfigPath     string
+	clusterName        string
+	nodepoolName       string
 )
 
 var rootCmd = &cobra.Command{
@@ -34,7 +35,8 @@ func init() {
 	cobra.OnInitialize(initConfig)
 
 	rootCmd.PersistentFlags().StringVar(&prometheusAddress, "prometheus-address", "", "Prometheus 서버 주소")
-	rootCmd.PersistentFlags().StringVar(&prometheusOrgID, "prometheus-org-id", "", "Prometheus 조직 ID")
+	rootCmd.PersistentFlags().StringVar(&prometheusTenantID, "prometheus-tenant-id", "", "Prometheus 테넌트 ID (X-Scope-OrgID)")
+	rootCmd.PersistentFlags().StringVar(&prometheusOrgID, "prometheus-org-id", "", "Deprecated: Prometheus 테넌트 ID (use --prometheus-tenant-id)")
 	rootCmd.PersistentFlags().StringVar(&slackWebhookURL, "slack-webhook-url", "", "Slack Webhook URL")
 	rootCmd.PersistentFlags().StringVar(&kubeConfig, "kube-config", "local", "Kubernetes 설정 (local 또는 cluster)")
 	rootCmd.PersistentFlags().StringVar(&kubeConfigPath, "kube-config-path", "", "Kubernetes config 파일 경로 (선택)")
@@ -48,12 +50,39 @@ func initConfig() {
 
 func applyRootFlagEnv(command *cobra.Command) {
 	setEnvFromFlagOrDefault(command, "prometheus-address", "PROMETHEUS_ADDRESS", prometheusAddress)
-	setEnvFromFlagOrDefault(command, "prometheus-org-id", "PROMETHEUS_SCOPE_ORG_ID", prometheusOrgID)
+	applyPrometheusTenantEnv(command)
 	setEnvFromFlagOrDefault(command, "slack-webhook-url", "SLACK_WEBHOOK_URL", slackWebhookURL)
 	setEnvFromFlagOrDefault(command, "kube-config", "KUBE_CONFIG", kubeConfig)
 	setEnvFromFlagOrDefault(command, "kube-config-path", "KUBECONFIG", kubeConfigPath)
 	setEnvFromFlagOrDefault(command, "cluster-name", "CLUSTER_NAME", clusterName)
 	setEnvFromFlagOrDefault(command, "nodepool-name", "NODEPOOL_NAME", nodepoolName)
+}
+
+func applyPrometheusTenantEnv(command *cobra.Command) {
+	if commandFlagChanged(command, "prometheus-tenant-id") {
+		_ = os.Setenv("PROMETHEUS_TENANT_ID", prometheusTenantID)
+		if strings.TrimSpace(prometheusTenantID) == "" {
+			_ = os.Setenv("PROMETHEUS_SCOPE_ORG_ID", "")
+		}
+		return
+	}
+	if commandFlagChanged(command, "prometheus-org-id") {
+		_ = os.Setenv("PROMETHEUS_SCOPE_ORG_ID", prometheusOrgID)
+		return
+	}
+	if envValue, exists := os.LookupEnv("PROMETHEUS_TENANT_ID"); exists && strings.TrimSpace(envValue) != "" {
+		return
+	}
+	if envValue, exists := os.LookupEnv("PROMETHEUS_SCOPE_ORG_ID"); exists && strings.TrimSpace(envValue) != "" {
+		return
+	}
+	if strings.TrimSpace(prometheusTenantID) != "" {
+		_ = os.Setenv("PROMETHEUS_TENANT_ID", prometheusTenantID)
+		return
+	}
+	if strings.TrimSpace(prometheusOrgID) != "" {
+		_ = os.Setenv("PROMETHEUS_SCOPE_ORG_ID", prometheusOrgID)
+	}
 }
 
 func setEnvFromFlagOrDefault(command *cobra.Command, flagName string, envKey string, value string) {

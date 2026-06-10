@@ -830,6 +830,7 @@ func restoreCommandEnv(t *testing.T) {
 
 	keys := []string{
 		"PROMETHEUS_ADDRESS",
+		"PROMETHEUS_TENANT_ID",
 		"PROMETHEUS_SCOPE_ORG_ID",
 		"SLACK_WEBHOOK_URL",
 		"KUBE_CONFIG",
@@ -888,6 +889,7 @@ func newDrainRuntimeFlagCommand() *cobra.Command {
 
 func snapshotCommandGlobals() func() {
 	origPrometheusAddress := prometheusAddress
+	origPrometheusTenantID := prometheusTenantID
 	origPrometheusOrgID := prometheusOrgID
 	origSlackWebhookURL := slackWebhookURL
 	origKubeConfig := kubeConfig
@@ -932,6 +934,7 @@ func snapshotCommandGlobals() func() {
 
 	return func() {
 		prometheusAddress = origPrometheusAddress
+		prometheusTenantID = origPrometheusTenantID
 		prometheusOrgID = origPrometheusOrgID
 		slackWebhookURL = origSlackWebhookURL
 		kubeConfig = origKubeConfig

@@ -24,15 +24,16 @@ on:
         description: 'Prometheus/Mimir 주소입니다.'
         type: string
         required: true
-      PROMETHEUS_ORG_ID:
-        description: '프로메테우스 미미르 프록시 org-id 입니다.'
-        type: choice
-        options:
-          - 'organization-dev'
-          - 'organization-alp'
-          - 'organization-prd'
-        required: true
+      PROMETHEUS_TENANT_ID:
+        description: 'Prometheus/Mimir tenant ID(X-Scope-OrgID)입니다. 비테넌트 Prometheus면 빈 값으로 둡니다.'
+        type: string
+        required: false
         default: 'organization-dev'
+      PROMETHEUS_ORG_ID:
+        description: 'Deprecated: PROMETHEUS_TENANT_ID를 사용하세요.'
+        type: string
+        required: false
+        default: ''
       NODEPOOL_NAME:
         description: '드레인 하려는 Nodepool 이름입니다.'
         type: string
@@ -241,8 +242,13 @@ jobs:
         else
           cmd+=(karpenter allocate-rate)
         fi
+        prometheus_tenant_id="${{ inputs.PROMETHEUS_TENANT_ID }}"
+        if [[ -z "${prometheus_tenant_id}" ]]; then
+          prometheus_tenant_id="${{ inputs.PROMETHEUS_ORG_ID }}"
+        fi
+
         cmd+=(--prometheus-address "${{ inputs.PROMETHEUS_ADDRESS }}")
-        cmd+=(--prometheus-org-id "${{ inputs.PROMETHEUS_ORG_ID }}")
+        cmd+=(--prometheus-tenant-id "${prometheus_tenant_id}")
         cmd+=(--nodepool-name "${{ inputs.NODEPOOL_NAME }}")
         cmd+=(--slack-webhook-url "${SLACK_WEBHOOK_URL:-}")
         cmd+=(--kube-config "${{ inputs.KUBE_CONFIG }}")

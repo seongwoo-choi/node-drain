@@ -20,10 +20,15 @@ on:
         description: "Prometheus/Mimir 주소 (예: http://prometheus.monitoring.svc:9090/prometheus)"
         required: true
         type: string
-      prometheus_org_id:
-        description: "Prometheus OrgID(X-Scope-OrgID)"
-        required: true
+      prometheus_tenant_id:
+        description: "Prometheus tenant ID(X-Scope-OrgID). 비테넌트 Prometheus면 빈 값"
+        required: false
         default: "organization-dev"
+        type: string
+      prometheus_org_id:
+        description: "Deprecated: use prometheus_tenant_id"
+        required: false
+        default: ""
         type: string
 
       # 드레인 정책(기본값은 기존 동작과 동일하게 두고, 워크플로우에서 안전한 권장값을 넣기 쉽도록 inputs 제공)
@@ -151,13 +156,17 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           set -euo pipefail
+          prometheus_tenant_id="${{ inputs.prometheus_tenant_id }}"
+          if [[ -z "${prometheus_tenant_id}" ]]; then
+            prometheus_tenant_id="${{ inputs.prometheus_org_id }}"
+          fi
 
           go run main.go drain \
             --cluster-name "${{ inputs.cluster_name }}" \
             --nodepool-name "${{ inputs.nodepool_name }}" \
             --kube-config "${{ inputs.kube_config_mode }}" \
             --prometheus-address "${{ inputs.prometheus_address }}" \
-            --prometheus-org-id "${{ inputs.prometheus_org_id }}" \
+            --prometheus-tenant-id "${prometheus_tenant_id}" \
             --slack-webhook-url "${SLACK_WEBHOOK_URL:-}" \
             --drain-min "${{ inputs.drain_min }}" \
             --drain-max-absolute "${{ inputs.drain_max_absolute }}" \

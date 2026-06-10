@@ -102,6 +102,43 @@ func TestHeaderRoundTripperSetsHeadersDeterministically(t *testing.T) {
 	defer resp.Body.Close()
 }
 
+func TestPrometheusTenantIDFromEnv(t *testing.T) {
+	tests := []struct {
+		name       string
+		tenantEnv  string
+		legacyEnv  string
+		wantTenant string
+	}{
+		{
+			name:       "empty when unset",
+			wantTenant: "",
+		},
+		{
+			name:       "uses tenant env",
+			tenantEnv:  " tenant-a ",
+			legacyEnv:  "legacy-a",
+			wantTenant: "tenant-a",
+		},
+		{
+			name:       "falls back to legacy scope org env",
+			legacyEnv:  " legacy-a ",
+			wantTenant: "legacy-a",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("PROMETHEUS_TENANT_ID", tt.tenantEnv)
+			t.Setenv("PROMETHEUS_SCOPE_ORG_ID", tt.legacyEnv)
+
+			if got := prometheusTenantIDFromEnv(); got != tt.wantTenant {
+				t.Fatalf("prometheusTenantIDFromEnv() = %q, want %q", got, tt.wantTenant)
+			}
+		})
+	}
+}
+
 func TestValidatePrometheusAddress(t *testing.T) {
 	tests := []struct {
 		name    string

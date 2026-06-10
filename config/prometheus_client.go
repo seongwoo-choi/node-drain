@@ -47,8 +47,8 @@ func CreatePrometheusClient() (api.Client, error) {
 	}
 
 	headers := map[string]string{}
-	if orgID := strings.TrimSpace(os.Getenv("PROMETHEUS_SCOPE_ORG_ID")); orgID != "" {
-		headers["X-Scope-OrgID"] = orgID
+	if tenantID := prometheusTenantIDFromEnv(); tenantID != "" {
+		headers["X-Scope-OrgID"] = tenantID
 	}
 
 	config := api.Config{
@@ -59,6 +59,13 @@ func CreatePrometheusClient() (api.Client, error) {
 		},
 	}
 	return api.NewClient(config)
+}
+
+func prometheusTenantIDFromEnv() string {
+	if tenantID := strings.TrimSpace(os.Getenv("PROMETHEUS_TENANT_ID")); tenantID != "" {
+		return tenantID
+	}
+	return strings.TrimSpace(os.Getenv("PROMETHEUS_SCOPE_ORG_ID"))
 }
 
 // ValidatePrometheusAddress verifies that the configured address is the Prometheus base URL.

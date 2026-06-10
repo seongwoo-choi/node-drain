@@ -65,12 +65,62 @@ func TestApplyRootFlagEnvUsesExplicitFlag(t *testing.T) {
 	}
 }
 
+func TestApplyRootFlagEnvUsesExplicitPrometheusTenantFlag(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	prometheusTenantID = "tenant-from-flag"
+	t.Setenv("PROMETHEUS_TENANT_ID", "tenant-from-env")
+	t.Setenv("PROMETHEUS_SCOPE_ORG_ID", "legacy-from-env")
+
+	command := &cobra.Command{}
+	command.Flags().String("prometheus-tenant-id", "", "")
+	command.Flags().String("prometheus-org-id", "", "")
+	if err := command.Flags().Set("prometheus-tenant-id", "tenant-from-flag"); err != nil {
+		t.Fatalf("set prometheus-tenant-id failed: %v", err)
+	}
+
+	applyRootFlagEnv(command)
+
+	if got := os.Getenv("PROMETHEUS_TENANT_ID"); got != "tenant-from-flag" {
+		t.Fatalf("expected explicit tenant flag to override env, got %q", got)
+	}
+	if got := os.Getenv("PROMETHEUS_SCOPE_ORG_ID"); got != "legacy-from-env" {
+		t.Fatalf("legacy env should be preserved when tenant flag is non-empty, got %q", got)
+	}
+}
+
+func TestApplyRootFlagEnvSupportsLegacyPrometheusOrgFlag(t *testing.T) {
+	restore := snapshotCommandGlobals()
+	defer restore()
+	restoreCommandEnv(t)
+
+	prometheusOrgID = "legacy-from-flag"
+	t.Setenv("PROMETHEUS_TENANT_ID", "")
+	t.Setenv("PROMETHEUS_SCOPE_ORG_ID", "")
+
+	command := &cobra.Command{}
+	command.Flags().String("prometheus-tenant-id", "", "")
+	command.Flags().String("prometheus-org-id", "", "")
+	if err := command.Flags().Set("prometheus-org-id", "legacy-from-flag"); err != nil {
+		t.Fatalf("set prometheus-org-id failed: %v", err)
+	}
+
+	applyRootFlagEnv(command)
+
+	if got := os.Getenv("PROMETHEUS_SCOPE_ORG_ID"); got != "legacy-from-flag" {
+		t.Fatalf("expected legacy org flag to populate legacy env, got %q", got)
+	}
+}
+
 func TestRootFlagDefaultsDoNotUsePlaceholderTargets(t *testing.T) {
 	tests := []struct {
 		flagName string
 		want     string
 	}{
 		{flagName: "prometheus-address", want: ""},
+		{flagName: "prometheus-tenant-id", want: ""},
 		{flagName: "prometheus-org-id", want: ""},
 		{flagName: "cluster-name", want: ""},
 		{flagName: "nodepool-name", want: ""},
@@ -205,6 +255,27 @@ func TestDrainWorkflowUsesKubernetesLockByDefault(t *testing.T) {
 	}
 }
 
+func TestDrainWorkflowUsesPrometheusTenantID(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/drain.yml")
+	if err != nil {
+		t.Fatalf("read workflow failed: %v", err)
+	}
+	text := string(workflow)
+	for _, required := range []string{
+		"prometheus_tenant_id:",
+		"prometheus_tenant_id=\"${{ inputs.prometheus_tenant_id }}\"",
+		"prometheus_tenant_id=\"${{ inputs.prometheus_org_id }}\"",
+		`--prometheus-tenant-id "${prometheus_tenant_id}"`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("drain workflow missing prometheus tenant id pattern: %s", required)
+		}
+	}
+	if strings.Contains(text, `--prometheus-org-id "${{ inputs.prometheus_org_id }}"`) {
+		t.Fatal("drain workflow should use --prometheus-tenant-id")
+	}
+}
+
 func TestLegacyWorkflowAvoidsPlaceholderDefaults(t *testing.T) {
 	workflow, err := os.ReadFile("../.github/workflows/eks-node-drain-based-on-karpenter-allocate-rate.yaml")
 	if err != nil {
@@ -267,5 +338,26 @@ func TestLegacyWorkflowUsesKubernetesLockByDefault(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Fatalf("legacy workflow missing kubernetes lock default: %s", required)
 		}
+	}
+}
+
+func TestLegacyWorkflowUsesPrometheusTenantID(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/eks-node-drain-based-on-karpenter-allocate-rate.yaml")
+	if err != nil {
+		t.Fatalf("read workflow failed: %v", err)
+	}
+	text := string(workflow)
+	for _, required := range []string{
+		"PROMETHEUS_TENANT_ID:",
+		"prometheus_tenant_id=\"${{ inputs.PROMETHEUS_TENANT_ID }}\"",
+		"prometheus_tenant_id=\"${{ inputs.PROMETHEUS_ORG_ID }}\"",
+		`cmd+=(--prometheus-tenant-id "${prometheus_tenant_id}")`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("legacy workflow missing prometheus tenant id pattern: %s", required)
+		}
+	}
+	if strings.Contains(text, `cmd+=(--prometheus-org-id "${{ inputs.PROMETHEUS_ORG_ID }}")`) {
+		t.Fatal("legacy workflow should use --prometheus-tenant-id")
 	}
 }

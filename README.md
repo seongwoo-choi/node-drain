@@ -59,7 +59,7 @@ go build -o node-manager .
 ```sh
 go run main.go karpenter allocate-rate \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "organization-dev" \
+  --prometheus-tenant-id "organization-dev" \
   --nodepool-name "worker-nodepool-name" \
   --kube-config "local" \
   --cluster-name "devel_eks_cluster"
@@ -70,7 +70,7 @@ go run main.go karpenter allocate-rate \
 ```sh
 go run main.go drain \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "organization-dev" \
+  --prometheus-tenant-id "organization-dev" \
   --nodepool-name "worker-nodepool-name" \
   --slack-webhook-url "https://hooks.slack.com/services/XXXXXXXX" \
   --kube-config "local" \
@@ -84,7 +84,7 @@ go run main.go drain \
 ```sh
 go run main.go analyze \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "organization-dev" \
+  --prometheus-tenant-id "organization-dev" \
   --nodepool-name "worker-nodepool-name" \
   --kube-config "local" \
   --cluster-name "devel_eks_cluster" \
@@ -104,7 +104,7 @@ go run main.go analyze \
 ```sh
 go run main.go drain \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "organization-dev" \
+  --prometheus-tenant-id "organization-dev" \
   --nodepool-name "worker-nodepool-name" \
   --slack-webhook-url "https://hooks.slack.com/services/XXXXXXXX" \
   --kube-config "local" \
@@ -131,7 +131,7 @@ go run main.go drain \
 ```sh
 go run main.go drain \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "organization-dev" \
+  --prometheus-tenant-id "organization-dev" \
   --nodepool-name "worker-nodepool-name" \
   --kube-config "local" \
   --cluster-name "devel_eks_cluster" \
@@ -157,7 +157,7 @@ go run main.go drain \
 go run main.go drain \
   --kube-config "cluster" \
   --prometheus-address "http://prometheus.monitoring.svc:9090" \
-  --prometheus-org-id "organization-dev" \
+  --prometheus-tenant-id "organization-dev" \
   --nodepool-name "worker-nodepool-name" \
   --cluster-name "devel_eks_cluster"
 ```
@@ -252,7 +252,7 @@ go run main.go drain \
   --cluster-name "devel_eks_cluster" \
   --kube-config "local" \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "organization-dev" \
+  --prometheus-tenant-id "organization-dev" \
   --drain-min 1 \
   --drain-max-absolute 2 \
   --drain-max-fraction 0.2
@@ -268,7 +268,7 @@ go run main.go drain \
   --cluster-name "devel_eks_cluster" \
   --kube-config "local" \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "organization-dev" \
+  --prometheus-tenant-id "organization-dev" \
   --drain-policy step \
   --drain-step-rules "80:1,60:2"
 ```
@@ -283,7 +283,7 @@ go run main.go drain \
   --cluster-name "devel_eks_cluster" \
   --kube-config "local" \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "organization-dev" \
+  --prometheus-tenant-id "organization-dev" \
   --drain-safety-max-allocate-rate 90 \
   --drain-safety-queries "sum(increase(kube_pod_container_status_restarts_total[10m])) > 0; sum(kube_pod_status_phase{phase=\"Pending\"}) > 0"
 ```
@@ -296,7 +296,7 @@ go run main.go drain \
   --cluster-name "devel_eks_cluster" \
   --kube-config "local" \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "organization-dev" \
+  --prometheus-tenant-id "organization-dev" \
   --drain-max-absolute 1 \
   --drain-safety-max-allocate-rate 90 \
   --drain-node-selection empty-first \
@@ -311,7 +311,7 @@ go run main.go drain \
   --cluster-name "devel_eks_cluster" \
   --kube-config "local" \
   --prometheus-address "http://localhost:8080/prometheus" \
-  --prometheus-org-id "organization-dev" \
+  --prometheus-tenant-id "organization-dev" \
   --drain-max-absolute 1 \
   --drain-safety-max-allocate-rate 90 \
   --drain-node-selection empty-first \
@@ -333,13 +333,13 @@ Karpenter 관련 메트릭을 조회해 NodePool의 자원 사용률(Allocate Ra
 | 플래그 | 기본값 | 설명 |
 | --- | ---: | --- |
 | `--prometheus-address` | `""` | Prometheus 서버 주소(`drain`, `karpenter allocate-rate` 필수) |
-| `--prometheus-org-id` | `""` | 멀티테넌시 환경에서 사용하는 Org ID (`X-Scope-OrgID`, 선택) |
+| `--prometheus-tenant-id` | `""` | 멀티테넌시 환경에서 사용하는 tenant ID (`X-Scope-OrgID`, 선택) |
 | `--slack-webhook-url` | `""` | Slack Webhook URL (`drain`에서 권장, 미지정 시 알림 생략) |
 | `--kube-config` | `local` | `local`, `cluster`, `github_action` |
 | `--cluster-name` | `""` | 클러스터 이름(`drain` 필수, PromQL cluster matcher에도 사용) |
 | `--nodepool-name` | `""` | 대상 NodePool 이름(`drain`, `karpenter allocate-rate` 필수) |
 
-테넌트가 분리되지 않은 Prometheus를 사용할 때는 `--prometheus-org-id`를 생략하세요. 이 값이 비어 있으면 `X-Scope-OrgID` 헤더를 전송하지 않습니다. 기존 shell에 `PROMETHEUS_SCOPE_ORG_ID`가 남아 있으면 플래그를 생략해도 환경 변수 값이 사용되므로, non-tenant Prometheus에서는 `unset PROMETHEUS_SCOPE_ORG_ID`로 비운 뒤 실행하세요.
+테넌트가 분리되지 않은 Prometheus를 사용할 때는 `--prometheus-tenant-id`를 생략하세요. 이 값이 비어 있으면 `X-Scope-OrgID` 헤더를 전송하지 않습니다. 기존 shell에 `PROMETHEUS_TENANT_ID`나 legacy `PROMETHEUS_SCOPE_ORG_ID`가 남아 있으면 플래그를 생략해도 환경 변수 값이 사용되므로, non-tenant Prometheus에서는 `unset PROMETHEUS_TENANT_ID PROMETHEUS_SCOPE_ORG_ID`로 비운 뒤 실행하세요. 기존 `--prometheus-org-id` 플래그도 호환을 위해 동작하지만 새 실행에서는 `--prometheus-tenant-id`를 사용하세요.
 
 ---
 
@@ -353,7 +353,8 @@ CLI는 설정을 `명시적으로 전달된 CLI 플래그 > 기존 환경 변수
 | 환경 변수 | 설명 |
 | --- | --- |
 | `PROMETHEUS_ADDRESS` | Prometheus 주소 |
-| `PROMETHEUS_SCOPE_ORG_ID` | `X-Scope-OrgID` 헤더 값. 비어 있으면 헤더를 전송하지 않음 |
+| `PROMETHEUS_TENANT_ID` | `X-Scope-OrgID` 헤더 값. 비어 있으면 헤더를 전송하지 않음 |
+| `PROMETHEUS_SCOPE_ORG_ID` | legacy `X-Scope-OrgID` 헤더 값. `PROMETHEUS_TENANT_ID`가 비어 있을 때만 fallback으로 사용 |
 | `SLACK_WEBHOOK_URL` | Slack Webhook URL |
 | `KUBE_CONFIG` | kube config 모드(`local/cluster/github_action`) |
 | `CLUSTER_NAME` | 클러스터 이름 |
@@ -408,7 +409,7 @@ GitHub UI에서 **Actions → drain → Run workflow**로 실행할 수 있습�
 
 ### 주요 Inputs(워크플로우 입력값)
 
-- `cluster_name`, `nodepool_name`, `prometheus_address`, `prometheus_org_id`
+- `cluster_name`, `nodepool_name`, `prometheus_address`, `prometheus_tenant_id`
 - 드레인 정책: `drain_min`, `drain_max_absolute`, `drain_max_fraction`, `drain_safety_max_allocate_rate`, `drain_progressive`
 - 중복 실행 lock: `drain_lock_mode`, `drain_lock_namespace`, `drain_lock_lease_duration`
   - GitHub Actions 기본값은 `drain_lock_mode=kubernetes`입니다. 같은 NodePool drain이 서로 다른 runner에서 동시에 실행되는 것을 막기 위해 Kubernetes `Lease`를 사용합니다.
@@ -597,8 +598,8 @@ subjects:
   - `--prometheus-address`가 올바른지, 포트포워딩이 살아있는지 확인하세요.
   - 주소는 Prometheus base URL이어야 합니다. 예: `http://localhost:8080/prometheus`
   - `/api/v1/query`까지 포함한 API endpoint를 넣으면 안 됩니다.
-  - 멀티테넌시 환경이면 `--prometheus-org-id`가 맞는지 확인하세요.
-  - 테넌트 미분리 환경이면 `--prometheus-org-id`를 빼고, 기존 `PROMETHEUS_SCOPE_ORG_ID` 환경 변수가 남아 있지 않은지 확인하세요.
+  - 멀티테넌시 환경이면 `--prometheus-tenant-id`가 맞는지 확인하세요.
+  - 테넌트 미분리 환경이면 `--prometheus-tenant-id`를 빼고, 기존 `PROMETHEUS_TENANT_ID`/`PROMETHEUS_SCOPE_ORG_ID` 환경 변수가 남아 있지 않은지 확인하세요.
 - **Slack 알림이 실패하는 경우**
   - `--slack-webhook-url`이 비어 있거나, Webhook이 200을 반환하지 않으면 실패합니다.
 - **드레인이 오래 걸리거나 멈춘 것처럼 보이는 경우**
