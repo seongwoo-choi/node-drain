@@ -257,6 +257,15 @@ func formatNodeDrainSummaryBlock(summary types.NodeDrainSummary) string {
 	if summary.PDBBlockedPods > 0 {
 		message += fmt.Sprintf("• PDBBlockedPods: %d\n", summary.PDBBlockedPods)
 	}
+	if summary.ProblemPodCount > 0 {
+		message += fmt.Sprintf("• ProblemPodCount: %d\n", summary.ProblemPodCount)
+	}
+	if summary.UnmanagedPodCount > 0 {
+		message += fmt.Sprintf("• UnmanagedPodCount: %d\n", summary.UnmanagedPodCount)
+	}
+	if summary.PodsWithFinalizers > 0 {
+		message += fmt.Sprintf("• PodsWithFinalizers: %d\n", summary.PodsWithFinalizers)
+	}
 	if summary.ForcedByFallback > 0 {
 		message += fmt.Sprintf("• ForcedByFallback: %d\n", summary.ForcedByFallback)
 	}

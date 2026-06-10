@@ -445,6 +445,15 @@ func finalizeNodeDrainSummary(summary *types.NodeDrainSummary, results []types.N
 				if len(plannedPod.PDBBlockers) > 0 {
 					summary.PDBBlockedPods++
 				}
+				if plannedPod.ProblemState {
+					summary.ProblemPodCount++
+				}
+				if plannedPod.OwnerKind == "" {
+					summary.UnmanagedPodCount++
+				}
+				if len(plannedPod.Finalizers) > 0 {
+					summary.PodsWithFinalizers++
+				}
 			}
 		}
 	}
@@ -525,6 +534,17 @@ func getNodeDrainPodPlan(ctx context.Context, clientSet kubernetes.Interface, no
 		if len(p.OwnerReferences) > 0 {
 			plan.OwnerKind = p.OwnerReferences[0].Kind
 			plan.OwnerName = p.OwnerReferences[0].Name
+		} else {
+			plan.Warnings = append(plan.Warnings, "pod has no owner reference; it may not be recreated automatically")
+		}
+		if len(p.Finalizers) > 0 {
+			plan.Finalizers = append(plan.Finalizers, p.Finalizers...)
+			plan.Warnings = append(plan.Warnings, "pod has finalizers; deletion may wait for finalizer cleanup")
+		}
+		if reason := pod.ProblemStateReason(&p); reason != "" {
+			plan.ProblemState = true
+			plan.ProblemReason = reason
+			plan.Warnings = append(plan.Warnings, "pod is in a problem state; drain may force delete it when force-problem-pods is enabled")
 		}
 		pdbBlockers, blockerErr := pod.GetPDBBlockers(ctx, clientSet, &p)
 		if blockerErr != nil {
@@ -538,7 +558,7 @@ func getNodeDrainPodPlan(ctx context.Context, clientSet kubernetes.Interface, no
 			})
 		}
 		plans = append(plans, plan)
-		slog.Info("dry-run 제거 대상 pod", "nodeName", nodeName, "namespace", plan.Namespace, "pod", plan.Name, "phase", plan.Phase, "ownerKind", plan.OwnerKind, "ownerName", plan.OwnerName, "pdbBlockers", len(plan.PDBBlockers))
+		slog.Info("dry-run 제거 대상 pod", "nodeName", nodeName, "namespace", plan.Namespace, "pod", plan.Name, "phase", plan.Phase, "ownerKind", plan.OwnerKind, "ownerName", plan.OwnerName, "pdbBlockers", len(plan.PDBBlockers), "warnings", len(plan.Warnings))
 	}
 	return plans, nil
 }

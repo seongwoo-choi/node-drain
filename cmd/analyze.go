@@ -148,12 +148,16 @@ func writeNodeDrainAnalysisReport(w io.Writer, report types.NodeDrainReport, out
 
 	_, err = fmt.Fprintf(
 		w,
-		"NodePool %s: total=%d planned=%d selected=%d plannedPods=%d dryRun=%t\n",
+		"NodePool %s: total=%d planned=%d selected=%d plannedPods=%d pdbBlockedPods=%d problemPods=%d unmanagedPods=%d podsWithFinalizers=%d dryRun=%t\n",
 		report.Summary.TargetNodepool,
 		report.Summary.TotalNodesInNodepool,
 		report.Summary.PlannedDrainNodeCount,
 		report.Summary.SelectedDrainNodeCount,
 		report.Summary.PlannedPodCount,
+		report.Summary.PDBBlockedPods,
+		report.Summary.ProblemPodCount,
+		report.Summary.UnmanagedPodCount,
+		report.Summary.PodsWithFinalizers,
 		report.Summary.DryRun,
 	)
 	return err

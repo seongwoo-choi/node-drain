@@ -560,20 +560,32 @@ func getMatchingPDBKeys(ctx context.Context, clientSet kubernetes.Interface, pod
 }
 
 func isPodInProblemState(pod *coreV1.Pod) bool {
+	return ProblemStateReason(pod) != ""
+}
+
+// ProblemStateReason returns a reason when a pod is likely to stall normal eviction.
+func ProblemStateReason(pod *coreV1.Pod) string {
+	if pod == nil {
+		return ""
+	}
+
 	for _, containerStatus := range pod.Status.ContainerStatuses {
 		if containerStatus.State.Waiting == nil {
 			continue
 		}
 		reason := containerStatus.State.Waiting.Reason
 		if reason == "ImagePullBackOff" || reason == "ErrImagePull" || reason == "CrashLoopBackOff" {
-			return true
+			if containerStatus.Name != "" {
+				return fmt.Sprintf("container %s waiting: %s", containerStatus.Name, reason)
+			}
+			return fmt.Sprintf("container waiting: %s", reason)
 		}
 	}
 
 	if pod.Status.Phase == coreV1.PodPending && time.Since(pod.CreationTimestamp.Time) > 10*time.Minute {
-		return true
+		return "pod pending for more than 10m"
 	}
-	return false
+	return ""
 }
 
 func waitForPodDeletion(ctx context.Context, clientSet kubernetes.Interface, pod coreV1.Pod, cfg *EvictionConfig) error {

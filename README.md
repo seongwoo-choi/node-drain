@@ -79,7 +79,7 @@ go run main.go drain \
 
 ### 3) 드레인 사전 진단
 
-실제 cordon/evict/delete 없이 Prometheus와 Kubernetes 상태를 조회해 드레인 계획과 PDB 차단 가능성을 JSON으로 확인합니다.
+실제 cordon/evict/delete 없이 Prometheus와 Kubernetes 상태를 조회해 드레인 계획, PDB 차단 가능성, finalizer/standalone/problem pod 리스크를 JSON으로 확인합니다.
 
 ```sh
 go run main.go analyze \
@@ -172,7 +172,7 @@ go run main.go drain \
 
 ### `analyze`
 
-지정한 NodePool의 드레인 사전 진단을 수행합니다. 내부적으로 dry-run 계획을 강제하므로 Kubernetes 리소스는 변경하지 않습니다. 실행 전에 Prometheus 사용률, 드레인 정책, 노드 선택 전략을 적용해 선택될 노드, 제거 예정 워크로드 파드, 현재 `disruptionsAllowed < 1`인 PDB 차단 가능성을 구조화된 report로 확인할 수 있습니다.
+지정한 NodePool의 드레인 사전 진단을 수행합니다. 내부적으로 dry-run 계획을 강제하므로 Kubernetes 리소스는 변경하지 않습니다. 실행 전에 Prometheus 사용률, 드레인 정책, 노드 선택 전략을 적용해 선택될 노드, 제거 예정 워크로드 파드, 현재 `disruptionsAllowed < 1`인 PDB 차단 가능성, finalizer/standalone/problem pod 리스크를 구조화된 report로 확인할 수 있습니다.
 
 | 플래그 | 기본값 | 설명 |
 | --- | ---: | --- |

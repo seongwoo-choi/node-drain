@@ -196,6 +196,10 @@ func TestWriteNodeDrainAnalysisReportText(t *testing.T) {
 			PlannedDrainNodeCount:  1,
 			SelectedDrainNodeCount: 1,
 			PlannedPodCount:        2,
+			PDBBlockedPods:         1,
+			ProblemPodCount:        1,
+			UnmanagedPodCount:      1,
+			PodsWithFinalizers:     1,
 			DryRun:                 true,
 		},
 	}
@@ -203,7 +207,7 @@ func TestWriteNodeDrainAnalysisReportText(t *testing.T) {
 	if err := writeNodeDrainAnalysisReport(&buf, report, "text"); err != nil {
 		t.Fatalf("writeNodeDrainAnalysisReport text failed: %v", err)
 	}
-	for _, want := range []string{"test-nodepool", "planned=1", "selected=1", "plannedPods=2", "dryRun=true"} {
+	for _, want := range []string{"test-nodepool", "planned=1", "selected=1", "plannedPods=2", "pdbBlockedPods=1", "problemPods=1", "unmanagedPods=1", "podsWithFinalizers=1", "dryRun=true"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Fatalf("text output missing %q: %s", want, buf.String())
 		}

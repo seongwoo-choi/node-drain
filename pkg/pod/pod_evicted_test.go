@@ -1063,12 +1063,28 @@ func TestEvictProblemPods(t *testing.T) {
 	_, err := client.CoreV1().Pods(problemPod.Namespace).Create(context.Background(), problemPod, metaV1.CreateOptions{})
 	assert.NoError(t, err)
 
-	// isPodInProblemState 함수 테스트
 	assert.True(t, isPodInProblemState(problemPod))
+	assert.Equal(t, "container main-container waiting: ImagePullBackOff", ProblemStateReason(problemPod))
 
 	// evictPod 함수 테스트 (강제 삭제 옵션 사용)
 	_, err = evictPod(context.Background(), client, *problemPod, DefaultEvictionConfig())
 	assert.NoError(t, err)
+}
+
+func TestProblemStateReasonDetectsOldPendingPod(t *testing.T) {
+	oldPendingTime := metaV1.NewTime(time.Now().Add(-11 * time.Minute))
+	pendingPod := &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Name:              "old-pending-pod",
+			Namespace:         "default",
+			CreationTimestamp: oldPendingTime,
+		},
+		Status: coreV1.PodStatus{
+			Phase: coreV1.PodPending,
+		},
+	}
+
+	assert.Equal(t, "pod pending for more than 10m", ProblemStateReason(pendingPod))
 }
 
 func TestEvictPodReturnsErrorOnGetFailure(t *testing.T) {

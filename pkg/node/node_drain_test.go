@@ -726,6 +726,92 @@ func TestNodeDrainWithReportDryRunIncludesPDBBlockers(t *testing.T) {
 	}
 }
 
+func TestNodeDrainWithReportDryRunIncludesPodRiskHints(t *testing.T) {
+	t.Setenv("DRAIN_POLICY", "formula")
+	t.Setenv("DRAIN_ROUNDING", "floor")
+	t.Setenv("DRAIN_MIN", "1")
+	t.Setenv("DRAIN_MAX_ABSOLUTE", "1")
+	t.Setenv("DRAIN_MAX_FRACTION", "0")
+	t.Setenv("DRAIN_STEP_RULES", "")
+	t.Setenv("DRAIN_SAFETY_MAX_ALLOCATE_RATE", "0")
+	t.Setenv("DRAIN_SAFETY_QUERIES", "")
+	t.Setenv("DRAIN_SAFETY_FAIL_CLOSED", "true")
+	t.Setenv("DRAIN_PROGRESSIVE", "true")
+
+	clientSet := fake.NewSimpleClientset()
+	nodepoolName := "test-nodepool"
+	node := newNode(nodepoolName, 1)
+	if _, err := clientSet.CoreV1().Nodes().Create(context.Background(), node, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("노드 생성 실패: %v", err)
+	}
+
+	oldPendingTime := metaV1.NewTime(time.Now().Add(-11 * time.Minute))
+	p := &coreV1.Pod{
+		ObjectMeta: metaV1.ObjectMeta{
+			Namespace:         "default",
+			Name:              "standalone-problem-pod",
+			CreationTimestamp: oldPendingTime,
+			Finalizers:        []string{"example.com/finalizer"},
+		},
+		Spec: coreV1.PodSpec{
+			NodeName: "node-1",
+			Containers: []coreV1.Container{
+				{Name: "container"},
+			},
+		},
+		Status: coreV1.PodStatus{
+			Phase: coreV1.PodPending,
+		},
+	}
+	if _, err := clientSet.CoreV1().Pods(p.Namespace).Create(context.Background(), p, metaV1.CreateOptions{}); err != nil {
+		t.Fatalf("파드 생성 실패: %v", err)
+	}
+
+	report, err := NodeDrainWithReport(context.Background(), clientSet, DrainDependencies{
+		AllocateRateProvider: fakeAllocateRateProvider{
+			rates: map[string]int{
+				"memory": 30,
+				"cpu":    30,
+			},
+		},
+		Notifier: fakeNotifier{},
+	}, DrainConfig{
+		NodepoolName: nodepoolName,
+		Eviction:     testEvictionConfig(),
+		DryRun:       true,
+	})
+	if err != nil {
+		t.Fatalf("NodeDrainWithReport dry-run 실패: %v", err)
+	}
+	if report.Summary.ProblemPodCount != 1 {
+		t.Fatalf("problem pod count 불일치: got=%d want=1", report.Summary.ProblemPodCount)
+	}
+	if report.Summary.UnmanagedPodCount != 1 {
+		t.Fatalf("unmanaged pod count 불일치: got=%d want=1", report.Summary.UnmanagedPodCount)
+	}
+	if report.Summary.PodsWithFinalizers != 1 {
+		t.Fatalf("pods with finalizers count 불일치: got=%d want=1", report.Summary.PodsWithFinalizers)
+	}
+	if len(report.Results) != 1 || len(report.Results[0].PlannedPods) != 1 {
+		t.Fatalf("dry-run planned pod 누락: %+v", report.Results)
+	}
+	plannedPod := report.Results[0].PlannedPods[0]
+	if !plannedPod.ProblemState || plannedPod.ProblemReason != "pod pending for more than 10m" {
+		t.Fatalf("problem state 정보 불일치: %+v", plannedPod)
+	}
+	if plannedPod.OwnerKind != "" || plannedPod.OwnerName != "" {
+		t.Fatalf("standalone pod owner 정보가 없어야 함: %+v", plannedPod)
+	}
+	if len(plannedPod.Finalizers) != 1 || plannedPod.Finalizers[0] != "example.com/finalizer" {
+		t.Fatalf("finalizer 정보 불일치: %+v", plannedPod.Finalizers)
+	}
+	for _, want := range []string{"no owner reference", "finalizers", "problem state"} {
+		if !containsSubstring(plannedPod.Warnings, want) {
+			t.Fatalf("warning %q 누락: %+v", want, plannedPod.Warnings)
+		}
+	}
+}
+
 func TestNodeDrainDryRunSkipsFinalAllocateRateRefresh(t *testing.T) {
 	t.Setenv("DRAIN_POLICY", "formula")
 	t.Setenv("DRAIN_ROUNDING", "floor")
@@ -1131,4 +1217,13 @@ func newNode(nodepool string, order int) *coreV1.Node {
 			CreationTimestamp: metaV1.NewTime(ts),
 		},
 	}
+}
+
+func containsSubstring(values []string, want string) bool {
+	for _, value := range values {
+		if strings.Contains(value, want) {
+			return true
+		}
+	}
+	return false
 }
