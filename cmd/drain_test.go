@@ -928,6 +928,7 @@ func snapshotCommandGlobals() func() {
 	origPodNodeTerminationTimeout := podNodeTerminationTimeout
 	origPodNodeTerminationCheckTick := podNodeTerminationCheckTick
 	origPodPostEvictionNodeDelay := podPostEvictionNodeDelay
+	origAnalyzeOutputFormat := analyzeOutputFormat
 
 	return func() {
 		prometheusAddress = origPrometheusAddress
@@ -971,5 +972,6 @@ func snapshotCommandGlobals() func() {
 		podNodeTerminationTimeout = origPodNodeTerminationTimeout
 		podNodeTerminationCheckTick = origPodNodeTerminationCheckTick
 		podPostEvictionNodeDelay = origPodPostEvictionNodeDelay
+		analyzeOutputFormat = origAnalyzeOutputFormat
 	}
 }

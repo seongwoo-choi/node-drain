@@ -77,6 +77,24 @@ go run main.go drain \
   --cluster-name "devel_eks_cluster"
 ```
 
+### 3) 드레인 사전 진단
+
+실제 cordon/evict/delete 없이 Prometheus와 Kubernetes 상태를 조회해 드레인 계획을 JSON으로 확인합니다.
+
+```sh
+go run main.go analyze \
+  --prometheus-address "http://localhost:8080/prometheus" \
+  --prometheus-org-id "organization-dev" \
+  --nodepool-name "worker-nodepool-name" \
+  --kube-config "local" \
+  --cluster-name "devel_eks_cluster" \
+  --drain-max-absolute 1 \
+  --drain-safety-max-allocate-rate 90 \
+  --drain-node-selection empty-first \
+  --drain-skip-unschedulable=true \
+  --output json
+```
+
 ---
 
 ## 기본(권장) drain CLI 템플릿
@@ -151,6 +169,27 @@ go run main.go drain \
 ### `drain`
 
 지정한 NodePool의 워크로드 노드를 안전하게 비우고 교체할 수 있도록 파드를 순차적으로 다른 노드로 이동시키는 커맨드입니다. 진행 상황은 Slack 알림 및 로그로 확인할 수 있습니다.
+
+### `analyze`
+
+지정한 NodePool의 드레인 사전 진단을 수행합니다. 내부적으로 dry-run 계획을 강제하므로 Kubernetes 리소스는 변경하지 않습니다. 실행 전에 Prometheus 사용률, 드레인 정책, 노드 선택 전략을 적용해 선택될 노드와 제거 예정 워크로드 파드를 구조화된 report로 확인할 수 있습니다.
+
+| 플래그 | 기본값 | 설명 |
+| --- | ---: | --- |
+| `--drain-policy` | `formula` | `formula`(계산식) 또는 `step` |
+| `--drain-rounding` | `floor` | `floor`/`round`/`ceil` |
+| `--drain-min` | `0` | 최소 드레인 노드 수(0이면 비활성) |
+| `--drain-max-absolute` | `0` | 최대 드레인 노드 수(절대값, 0이면 비활성) |
+| `--drain-max-fraction` | `0` | 최대 드레인 비율(예: `0.2`는 최대 20%, 0이면 비활성) |
+| `--drain-step-rules` | `""` | 계단식 규칙(예: `"80:1,60:2"`) |
+| `--drain-safety-max-allocate-rate` | `0` | `maxAllocateRate >= 값`이면 0대로 강제 |
+| `--drain-safety-queries` | `""` | PromQL 목록(세미콜론/개행 구분). 하나라도 결과가 >0이면 0대로 강제 |
+| `--drain-safety-fail-closed` | `true` | 안전 쿼리 실패 시 0대로 강제할지 |
+| `--drain-node-selection` | `oldest` | 드레인 대상 노드 선택 전략: `oldest`, `empty-first`, `least-pods`, `most-pods` |
+| `--drain-skip-unschedulable` | `false` | 이미 cordon된 노드를 새 드레인 후보에서 제외 |
+| `--output` | `json` | 결과 출력 형식. `json` 또는 `text` |
+
+`analyze`는 중복 실행 lock을 잡지 않고 Slack 알림을 보내지 않습니다. 운영 실행 전 점검과 자동화 파이프라인의 사전 게이트에 사용하는 용도입니다.
 
 #### 드레인 정책(운영 안정화 옵션)
 
